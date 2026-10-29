@@ -1,10 +1,11 @@
 /**
  * Cliente SPA Monolito (Vanilla JS ES6+)
- * Control de archivos por trozos, agenda con recordatorios SMTP, contactos y cambio obligatorio de clave.
+ * Theming corporativo centralizado en base de datos, subida por fragmentos,
+ * recordatorios SMTP de agenda, contactos y control de claves.
  */
 
 const CONFIG = {
-    CHUNK_SIZE: 20 * 1024 * 1024, // 20 MB por fragmento (compatible con Cloudflare y redes lentas)
+    CHUNK_SIZE: 20 * 1024 * 1024, // 20 MB por fragmento
     API_URL: window.location.origin
 };
 
@@ -15,7 +16,8 @@ const state = {
     currentFolder: "",
     folderPath: [],
     contactsCache: [],
-    calendarEventsCache: []
+    calendarEventsCache: [],
+    settingsRecordId: null
 };
 
 // ==========================================
@@ -23,7 +25,7 @@ const state = {
 // ==========================================
 
 document.addEventListener("DOMContentLoaded", () => {
-    applyCustomization();
+    fetchGlobalTheme();
     initEventListeners();
 
     if (state.token && state.user) {
@@ -108,7 +110,6 @@ async function handleLogin(e) {
 
         const data = await res.json();
 
-        // Si la cuenta requiere MFA y aún no se introdujo el código
         if (data.mfaId && !totpCode) {
             totpGroup.style.display = "block";
             errBox.textContent = "Introduce el código de 6 dígitos de tu aplicación TOTP.";
@@ -120,7 +121,6 @@ async function handleLogin(e) {
 
         setSession(data.token, data.record);
 
-        // Bloqueo obligatorio si tiene marcado cambio de contraseña
         if (data.record.force_password_change) {
             modalForcePasswordChange();
         } else {
@@ -560,7 +560,7 @@ async function deleteContact(id) {
 }
 
 // ==========================================
-// 7. ADMINISTRACIÓN (USUARIOS, SMTP, MARCA)
+// 7. ADMINISTRACIÓN (USUARIOS, SMTP, THEMING GLOBAL)
 // ==========================================
 
 async function loadAdminData() {
@@ -678,25 +678,28 @@ async function handleTestSmtp() {
     }
 }
 
-function handleSaveCustomization(e) {
-    e.preventDefault();
-    const name = document.getElementById("setting-app-name").value.trim();
-    const icon = document.getElementById("setting-app-icon").value;
-    const color = document.getElementById("setting-accent-color").value;
+// ==========================================
+// 8. THEMING GLOBAL (PERSISTENTE EN SERVIDOR)
+// ==========================================
 
-    localStorage.setItem("app_name", name);
-    localStorage.setItem("app_icon", icon);
-    localStorage.setItem("app_color", color);
-
-    applyCustomization();
-    alert("Personalización guardada con éxito.");
+async function fetchGlobalTheme() {
+    try {
+        // Lectura pública desde la colección app_settings
+        const res = await fetch(`${CONFIG.API_URL}/api/collections/app_settings/records?perPage=1`);
+        if (res.ok) {
+            const data = await res.json();
+            if (data.items && data.items.length > 0) {
+                const s = data.items[0];
+                state.settingsRecordId = s.id;
+                renderTheme(s.app_name, s.app_icon, s.accent_color);
+                return;
+            }
+        }
+    } catch (_) {}
+    renderTheme("Nube Monolito", "📁", "#2563eb");
 }
 
-function applyCustomization() {
-    const name = localStorage.getItem("app_name") || "Nube Monolito";
-    const icon = localStorage.getItem("app_icon") || "📁";
-    const color = localStorage.getItem("app_color") || "#2563eb";
-
+function renderTheme(name, icon, color) {
     document.getElementById("page-title").textContent = name;
     document.getElementById("login-app-title").textContent = name;
     document.getElementById("nav-app-title").textContent = name;
@@ -717,8 +720,45 @@ function applyCustomization() {
     if (labelColor) labelColor.textContent = color;
 }
 
+async function handleSaveCustomization(e) {
+    e.preventDefault();
+    const name = document.getElementById("setting-app-name").value.trim();
+    const icon = document.getElementById("setting-app-icon").value;
+    const color = document.getElementById("setting-accent-color").value;
+
+    if (!state.settingsRecordId) {
+        try {
+            const check = await fetch(`${CONFIG.API_URL}/api/collections/app_settings/records?perPage=1`);
+            const d = await check.json();
+            if (d.items && d.items[0]) state.settingsRecordId = d.items[0].id;
+        } catch (_) {}
+    }
+
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/collections/app_settings/records/${state.settingsRecordId}`, {
+            method: "PATCH",
+            headers: getHeaders(),
+            body: JSON.stringify({
+                app_name: name,
+                app_icon: icon,
+                accent_color: color
+            })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.message || "Error al guardar el tema");
+        }
+
+        renderTheme(name, icon, color);
+        alert("Personalización corporativa guardada con éxito en el servidor.");
+    } catch (err) {
+        alert("Fallo al guardar: " + err.message);
+    }
+}
+
 // ==========================================
-// 8. MODALES Y FORMULARIOS
+// 9. MODALES Y FORMULARIOS
 // ==========================================
 
 function openModal(title, contentHtml, canClose = true) {
@@ -994,7 +1034,7 @@ function modalNewEvent() {
 }
 
 // ==========================================
-// 9. UTILIDADES Y FORMATO
+// 10. UTILIDADES Y FORMATO
 // ==========================================
 
 async function loadQuota() {
