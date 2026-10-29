@@ -1,10 +1,10 @@
 /**
  * Cliente SPA Monolito (Vanilla JS ES6+)
- * Comunicación directa con la API REST de PocketBase y el hook de fragmentación.
+ * Control de archivos por trozos, agenda con recordatorios SMTP, contactos y cambio obligatorio de clave.
  */
 
 const CONFIG = {
-    CHUNK_SIZE: 20 * 1024 * 1024, // 20 MB por fragmento (compatible con proxies y redes móviles)
+    CHUNK_SIZE: 20 * 1024 * 1024, // 20 MB por fragmento (compatible con Cloudflare y redes lentas)
     API_URL: window.location.origin
 };
 
@@ -13,13 +13,13 @@ const state = {
     user: JSON.parse(localStorage.getItem("pb_user") || "null"),
     currentView: "files",
     currentFolder: "",
-    folderPath: [], // Historial de navegación para breadcrumbs [{id, name}]
+    folderPath: [],
     contactsCache: [],
     calendarEventsCache: []
 };
 
 // ==========================================
-// 1. INICIALIZACIÓN Y GESTIÓN DE SESIÓN
+// 1. INICIALIZACIÓN Y SESIÓN
 // ==========================================
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -34,29 +34,35 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 function initEventListeners() {
-    // Formulario de login
     document.getElementById("login-form").addEventListener("submit", handleLogin);
 
-    // Navegación lateral
     document.querySelectorAll(".nav-item").forEach(btn => {
         btn.addEventListener("click", () => switchView(btn.dataset.view));
     });
 
-    // Cierre de sesión
     document.getElementById("btn-logout").addEventListener("click", handleLogout);
 
-    // Búsqueda de contactos en tiempo real
     document.getElementById("contact-search").addEventListener("input", (e) => {
         renderContacts(e.target.value.toLowerCase());
     });
 
-    // Personalización en administración
+    // Administración
     document.getElementById("admin-customization-form").addEventListener("submit", handleSaveCustomization);
     document.getElementById("setting-accent-color").addEventListener("input", (e) => {
         document.getElementById("color-hex-label").textContent = e.target.value;
     });
 
-    // Cierre de modal genérico
+    const smtpForm = document.getElementById("admin-smtp-form");
+    if (smtpForm) {
+        smtpForm.addEventListener("submit", handleSaveSmtp);
+        document.getElementById("btn-test-smtp").addEventListener("click", handleTestSmtp);
+    }
+
+    const btnNewUser = document.getElementById("btn-new-user");
+    if (btnNewUser) {
+        btnNewUser.addEventListener("click", modalNewUser);
+    }
+
     document.getElementById("modal-close").addEventListener("click", closeModal);
 }
 
@@ -69,7 +75,12 @@ async function verifySession() {
         if (!res.ok) throw new Error("Sesión caducada");
         const data = await res.json();
         setSession(data.token, data.record);
-        showDashboard();
+
+        if (data.record.force_password_change) {
+            modalForcePasswordChange();
+        } else {
+            showDashboard();
+        }
     } catch (_) {
         handleLogout();
     }
@@ -77,7 +88,7 @@ async function verifySession() {
 
 async function handleLogin(e) {
     e.preventDefault();
-    const email = document.getElementById("login-email").value.trim();
+    const identity = document.getElementById("login-email").value.trim();
     const password = document.getElementById("login-password").value;
     const totpCode = document.getElementById("login-totp").value.trim();
     const errBox = document.getElementById("login-error");
@@ -85,7 +96,7 @@ async function handleLogin(e) {
 
     errBox.style.display = "none";
 
-    const payload = { identity: email, password: password };
+    const payload = { identity: identity, password: password };
     if (totpCode) payload.mfaCode = totpCode;
 
     try {
@@ -97,10 +108,10 @@ async function handleLogin(e) {
 
         const data = await res.json();
 
-        // Si la cuenta tiene MFA activado y falta el código
+        // Si la cuenta requiere MFA y aún no se introdujo el código
         if (data.mfaId && !totpCode) {
             totpGroup.style.display = "block";
-            errBox.textContent = "Introduce el código de 6 dígitos de tu aplicación autenticadora.";
+            errBox.textContent = "Introduce el código de 6 dígitos de tu aplicación TOTP.";
             errBox.style.display = "block";
             return;
         }
@@ -108,7 +119,13 @@ async function handleLogin(e) {
         if (!res.ok) throw new Error(data.message || "Credenciales incorrectas.");
 
         setSession(data.token, data.record);
-        showDashboard();
+
+        // Bloqueo obligatorio si tiene marcado cambio de contraseña
+        if (data.record.force_password_change) {
+            modalForcePasswordChange();
+        } else {
+            showDashboard();
+        }
     } catch (err) {
         errBox.textContent = err.message;
         errBox.style.display = "block";
@@ -139,13 +156,11 @@ function showDashboard() {
     document.getElementById("auth-container").style.display = "none";
     document.getElementById("app-container").style.display = "flex";
 
-    // Datos del usuario en barra lateral
-    const name = state.user.name || state.user.email.split("@")[0];
+    const name = state.user.name || state.user.username || state.user.email.split("@")[0];
     document.getElementById("user-display-name").textContent = name;
     document.getElementById("user-initial").textContent = name.charAt(0).toUpperCase();
     document.getElementById("user-display-role").textContent = state.user.role || "user";
 
-    // Mostrar menú de administración si corresponde
     if (state.user.role === "admin") {
         document.getElementById("nav-admin").style.display = "flex";
     } else {
@@ -256,7 +271,6 @@ async function loadFiles() {
             return;
         }
 
-        // Listar carpetas
         foldersData.items.forEach(folder => {
             const tr = document.createElement("tr");
             tr.innerHTML = `
@@ -279,7 +293,6 @@ async function loadFiles() {
             });
         });
 
-        // Listar archivos
         filesData.items.forEach(file => {
             const tr = document.createElement("tr");
             const fileUrl = `${CONFIG.API_URL}/api/files/files/${file.id}/${file.file}?token=${state.token}`;
@@ -353,7 +366,7 @@ async function deleteFolder(folderId) {
 }
 
 // ==========================================
-// 4. SUBIDA POR BLOQUES (CHUNKING ROBUSTO)
+// 4. SUBIDA POR BLOQUES (CHUNKING)
 // ==========================================
 
 function triggerFileSelect() {
@@ -379,9 +392,9 @@ async function uploadFileInChunks(file) {
     fillEl.style.width = "0%";
     bytesEl.textContent = `0 MB / ${formatMB(file.size)} MB`;
     pctEl.textContent = "0.0%";
-    subtextEl.textContent = "Calculando bloques...";
+    subtextEl.textContent = "Iniciando fragmentación...";
 
-    const uploadId = "upl_" + Math.random().toString(36).substring(2, 12) + Date.now().toString(36);
+    const uploadId = "upl_" + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
     const totalChunks = Math.ceil(file.size / CONFIG.CHUNK_SIZE);
     let bytesUploaded = 0;
 
@@ -547,12 +560,12 @@ async function deleteContact(id) {
 }
 
 // ==========================================
-// 7. ADMINISTRACIÓN Y PERSONALIZACIÓN
+// 7. ADMINISTRACIÓN (USUARIOS, SMTP, MARCA)
 // ==========================================
 
 async function loadAdminData() {
     const tbody = document.getElementById("admin-users-list");
-    tbody.innerHTML = `<tr><td colspan="4" class="text-center">Cargando usuarios...</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center">Cargando usuarios...</td></tr>`;
 
     try {
         const res = await fetch(`${CONFIG.API_URL}/api/collections/users/records?sort=-created`, {
@@ -564,9 +577,10 @@ async function loadAdminData() {
         data.items.forEach(u => {
             const tr = document.createElement("tr");
             tr.innerHTML = `
-                <td>${escapeHtml(u.email)}</td>
+                <td>${escapeHtml(u.email || u.username)}</td>
                 <td><span class="user-role-badge">${u.role || "user"}</span></td>
                 <td>${u.storage_quota ? formatBytes(u.storage_quota) : "Ilimitada"}</td>
+                <td>${u.force_password_change ? "⚠️ Pendiente" : "✅ Al día"}</td>
                 <td class="text-right">
                     <button class="btn btn-secondary btn-sm" onclick="editUserQuota('${u.id}', ${u.storage_quota || 0})">Cuota</button>
                 </td>
@@ -574,8 +588,10 @@ async function loadAdminData() {
             tbody.appendChild(tr);
         });
     } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="4" class="text-center alert-error">Error: ${err.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center alert-error">Error: ${err.message}</td></tr>`;
     }
+
+    loadSmtpSettings();
 }
 
 async function editUserQuota(userId, currentQuota) {
@@ -590,6 +606,76 @@ async function editUserQuota(userId, currentQuota) {
         body: JSON.stringify({ storage_quota: bytes })
     });
     loadAdminData();
+}
+
+async function loadSmtpSettings() {
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/custom/mail-settings`, {
+            headers: getHeaders()
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+
+        document.getElementById("smtp-enabled").checked = data.enabled;
+        document.getElementById("smtp-host").value = data.host || "";
+        document.getElementById("smtp-port").value = data.port || 587;
+        document.getElementById("smtp-user").value = data.username || "";
+        document.getElementById("smtp-sender-address").value = data.sender_address || "";
+        document.getElementById("smtp-sender-name").value = data.sender_name || "";
+        document.getElementById("smtp-tls").checked = data.tls;
+    } catch (_) {}
+}
+
+async function handleSaveSmtp(e) {
+    e.preventDefault();
+    const payload = {
+        enabled: document.getElementById("smtp-enabled").checked,
+        host: document.getElementById("smtp-host").value.trim(),
+        port: parseInt(document.getElementById("smtp-port").value, 10),
+        username: document.getElementById("smtp-user").value.trim(),
+        password: document.getElementById("smtp-pass").value,
+        sender_address: document.getElementById("smtp-sender-address").value.trim(),
+        sender_name: document.getElementById("smtp-sender-name").value.trim(),
+        tls: document.getElementById("smtp-tls").checked
+    };
+
+    const res = await fetch(`${CONFIG.API_URL}/api/custom/mail-settings`, {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify(payload)
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+        alert("Configuración de correo guardada con éxito.");
+        document.getElementById("smtp-pass").value = "";
+    } else {
+        alert("Error al guardar: " + data.error);
+    }
+}
+
+async function handleTestSmtp() {
+    const btn = document.getElementById("btn-test-smtp");
+    btn.textContent = "Probando...";
+    btn.disabled = true;
+
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/custom/mail-test`, {
+            method: "POST",
+            headers: getHeaders()
+        });
+        const data = await res.json();
+        if (res.ok) {
+            alert(data.message);
+        } else {
+            alert("Fallo en la prueba: " + data.error);
+        }
+    } catch (err) {
+        alert("Error de conexión: " + err.message);
+    } finally {
+        btn.textContent = "Probar Envío";
+        btn.disabled = false;
+    }
 }
 
 function handleSaveCustomization(e) {
@@ -618,11 +704,8 @@ function applyCustomization() {
     document.getElementById("nav-app-icon").textContent = icon;
 
     document.documentElement.style.setProperty("--accent", color);
-
-    // Ajuste de brillo para el hover
     document.documentElement.style.setProperty("--accent-hover", adjustBrightness(color, -20));
 
-    // Reflejar en inputs del formulario de administración
     const inputName = document.getElementById("setting-app-name");
     const inputIcon = document.getElementById("setting-app-icon");
     const inputColor = document.getElementById("setting-accent-color");
@@ -635,17 +718,138 @@ function applyCustomization() {
 }
 
 // ==========================================
-// 8. MODALES Y FORMULARIOS RÁPIDOS
+// 8. MODALES Y FORMULARIOS
 // ==========================================
 
-function openModal(title, contentHtml) {
+function openModal(title, contentHtml, canClose = true) {
     document.getElementById("modal-title").textContent = title;
     document.getElementById("modal-body").innerHTML = contentHtml;
+    document.getElementById("modal-close").style.display = canClose ? "block" : "none";
     document.getElementById("generic-modal").style.display = "flex";
 }
 
 function closeModal() {
     document.getElementById("generic-modal").style.display = "none";
+}
+
+function modalForcePasswordChange() {
+    openModal("Cambio Obligatorio de Contraseña", `
+        <p style="font-size:0.875rem; color:var(--text-muted); margin-bottom:1rem;">
+            Tu cuenta tiene una clave temporal o requiere actualización por seguridad. Introduce una nueva contraseña (mínimo 8 caracteres).
+        </p>
+        <form id="form-force-pass">
+            <div class="form-group">
+                <label>Nueva Contraseña</label>
+                <input type="password" id="new-password" minlength="8" required autofocus>
+            </div>
+            <div class="form-group">
+                <label>Confirmar Nueva Contraseña</label>
+                <input type="password" id="new-password-confirm" minlength="8" required>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block">Establecer Nueva Contraseña</button>
+            <div id="pass-change-error" class="alert-error" style="display: none; margin-top:0.75rem;"></div>
+        </form>
+    `, false);
+
+    document.getElementById("form-force-pass").onsubmit = async (e) => {
+        e.preventDefault();
+        const p1 = document.getElementById("new-password").value;
+        const p2 = document.getElementById("new-password-confirm").value;
+        const errEl = document.getElementById("pass-change-error");
+
+        if (p1 !== p2) {
+            errEl.textContent = "Las contraseñas no coinciden.";
+            errEl.style.display = "block";
+            return;
+        }
+
+        try {
+            const res = await fetch(`${CONFIG.API_URL}/api/collections/users/records/${state.user.id}`, {
+                method: "PATCH",
+                headers: getHeaders(),
+                body: JSON.stringify({
+                    password: p1,
+                    passwordConfirm: p2,
+                    force_password_change: false
+                })
+            });
+
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.message || "Error al actualizar clave.");
+            }
+
+            state.user.force_password_change = false;
+            setSession(state.token, state.user);
+            closeModal();
+            showDashboard();
+            alert("Contraseña actualizada con éxito.");
+        } catch (err) {
+            errEl.textContent = err.message;
+            errEl.style.display = "block";
+        }
+    };
+}
+
+function modalNewUser() {
+    openModal("Crear Nuevo Usuario", `
+        <form id="form-create-user">
+            <div class="form-group">
+                <label>Correo Electrónico</label>
+                <input type="email" id="new-user-email" required>
+            </div>
+            <div class="form-group">
+                <label>Contraseña Temporal (mínimo 8 caracteres)</label>
+                <input type="password" id="new-user-pass" minlength="8" value="Temporal1234!" required>
+            </div>
+            <div class="form-group">
+                <label>Rol en la Aplicación</label>
+                <select id="new-user-role">
+                    <option value="user">Usuario Estándar</option>
+                    <option value="admin">Administrador</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Cuota de Almacenamiento (GB, 0 = ilimitado)</label>
+                <input type="number" id="new-user-quota" value="10">
+            </div>
+            <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:1rem;">
+                * El usuario estará obligado a cambiar esta contraseña en su primer inicio de sesión.
+            </p>
+            <button type="submit" class="btn btn-primary btn-block">Crear Cuenta</button>
+        </form>
+    `);
+
+    document.getElementById("form-create-user").onsubmit = async (e) => {
+        e.preventDefault();
+        const email = document.getElementById("new-user-email").value.trim();
+        const pass = document.getElementById("new-user-pass").value;
+        const role = document.getElementById("new-user-role").value;
+        const quotaGB = parseInt(document.getElementById("new-user-quota").value, 10) || 0;
+
+        const res = await fetch(`${CONFIG.API_URL}/api/collections/users/records`, {
+            method: "POST",
+            headers: getHeaders(),
+            body: JSON.stringify({
+                email: email,
+                password: pass,
+                passwordConfirm: pass,
+                role: role,
+                storage_quota: quotaGB * 1024 * 1024 * 1024,
+                force_password_change: true,
+                emailVisibility: true
+            })
+        });
+
+        if (res.ok) {
+            closeModal();
+            loadAdminData();
+            alert(`Usuario ${email} creado correctamente con clave temporal.`);
+        } else {
+            const err = await res.json();
+            alert("Error al crear usuario: " + JSON.stringify(err.data || err.message));
+        }
+    };
 }
 
 function modalNewFolder() {
@@ -690,7 +894,7 @@ function modalNewContact() {
     openModal("Nuevo Contacto", `
         <form id="form-new-contact">
             <div class="form-group">
-                <label>Nombre</label>
+                <label>Nombre Completo</label>
                 <input type="text" id="contact-name" required>
             </div>
             <div class="form-group">
@@ -702,12 +906,12 @@ function modalNewContact() {
                 <input type="tel" id="contact-phone">
             </div>
             <div class="form-group">
-                <label>Empresa</label>
+                <label>Empresa / Organización</label>
                 <input type="text" id="contact-company">
             </div>
             <div class="form-group">
                 <label>
-                    <input type="checkbox" id="contact-is-group"> Visible para todo el grupo
+                    <input type="checkbox" id="contact-is-group"> Contacto compartido de grupo
                 </label>
             </div>
             <button type="submit" class="btn btn-primary btn-block">Guardar Contacto</button>
@@ -739,20 +943,24 @@ function modalNewEvent() {
     openModal("Nuevo Evento de Agenda", `
         <form id="form-new-event">
             <div class="form-group">
-                <label>Título</label>
+                <label>Título del Evento</label>
                 <input type="text" id="event-title" required>
             </div>
             <div class="form-group">
-                <label>Inicio</label>
+                <label>Fecha y Hora de Inicio</label>
                 <input type="datetime-local" id="event-start" required>
             </div>
             <div class="form-group">
-                <label>Fin</label>
+                <label>Fecha y Hora de Fin</label>
                 <input type="datetime-local" id="event-end" required>
             </div>
             <div class="form-group">
                 <label>Ubicación</label>
-                <input type="text" id="event-location">
+                <input type="text" id="event-location" placeholder="Despacho 2, Sala de Juntas...">
+            </div>
+            <div class="form-group">
+                <label>Descripción / Notas</label>
+                <textarea id="event-desc" rows="2" class="form-group"></textarea>
             </div>
             <div class="form-group">
                 <label>
@@ -774,6 +982,7 @@ function modalNewEvent() {
                 start_time: new Date(document.getElementById("event-start").value).toISOString(),
                 end_time: new Date(document.getElementById("event-end").value).toISOString(),
                 location: document.getElementById("event-location").value.trim(),
+                description: document.getElementById("event-desc").value.trim(),
                 owner: state.user.id,
                 is_group: isGroup,
                 group: isGroup ? state.user.user_group : null
@@ -796,7 +1005,7 @@ async function loadQuota() {
         const data = await res.json();
         const totalUsed = data.items.reduce((acc, f) => acc + (f.size || 0), 0);
 
-        const quota = state.user.storage_quota || 10737418240; // 10 GB por defecto
+        const quota = state.user.storage_quota || 10737418240;
         document.getElementById("storage-quota-display").textContent = `${formatMB(totalUsed)} MB / ${formatMB(quota)} MB`;
     } catch (_) {}
 }
