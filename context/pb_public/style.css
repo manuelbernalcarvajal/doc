@@ -350,7 +350,7 @@ body {
     display: block;
 }
 
-/* Tablas y Listados */
+/* Tablas */
 .file-breadcrumbs {
     margin-bottom: 1rem;
     font-size: 0.875rem;
@@ -413,7 +413,7 @@ body {
     text-align: center;
 }
 
-/* Tarjetas y Rejillas */
+/* Rejillas y tarjetas */
 .cards-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -440,7 +440,7 @@ body {
 
 .admin-grid {
     display: grid;
-    grid-template-columns: 1fr 1.5fr;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 1.5rem;
 }
 
@@ -519,7 +519,38 @@ body {
     color: var(--text-muted);
 }
 
-/* Barra de progreso de subida por bloques */
+/* Modal WOPI pantalla completa */
+.modal-backdrop-fullscreen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: #0f172a;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+}
+
+.wopi-header {
+    background: var(--bg-surface);
+    padding: 0.6rem 1.25rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.wopi-frame {
+    flex: 1;
+    width: 100%;
+    border: none;
+    background: #ffffff;
+}
+
+/* Barra de progreso de subidas */
 .progress-track {
     width: 100%;
     height: 12px;
