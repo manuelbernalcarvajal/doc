@@ -1,8 +1,8 @@
 /// <reference path="../pb_data/types.d.ts" />
 
 /**
- * Inicializador idempotente del esquema de datos, configuración de almacenamiento S3
- * y control de accesos (RBAC) con directivas de cambio obligatorio de clave.
+ * Inicializador idempotente del esquema de datos, almacenamiento S3 cifrado,
+ * control de accesos (RBAC) y tema corporativo global.
  */
 onAfterBootstrap((e) => {
     const dao = $app.dao();
@@ -25,7 +25,34 @@ onAfterBootstrap((e) => {
         }
     };
 
-    // 1. Colección: groups (Departamentos o equipos de trabajo)
+    // 1. Colección: app_settings (Identidad visual global / Theming del servidor)
+    let settingsCol;
+    if (!collectionExists("app_settings")) {
+        settingsCol = new Collection();
+        settingsCol.name = "app_settings";
+        settingsCol.type = "base";
+        // Lectura pública para que la pantalla de login adopte los colores y marca
+        settingsCol.listRule = "";
+        settingsCol.viewRule = "";
+        settingsCol.createRule = "@request.auth.role = 'admin'";
+        settingsCol.updateRule = "@request.auth.role = 'admin'";
+        settingsCol.deleteRule = "@request.auth.role = 'admin'";
+
+        settingsCol.schema.addField(helperField("app_name", "text", true));
+        settingsCol.schema.addField(helperField("app_icon", "text", true));
+        settingsCol.schema.addField(helperField("accent_color", "text", true));
+
+        dao.saveCollection(settingsCol);
+
+        // Registro corporativo inicial por defecto
+        const defaultTheme = new Record(settingsCol);
+        defaultTheme.set("app_name", "Nube Monolito");
+        defaultTheme.set("app_icon", "📁");
+        defaultTheme.set("accent_color", "#2563eb");
+        dao.saveRecord(defaultTheme);
+    }
+
+    // 2. Colección: groups (Departamentos o equipos de trabajo)
     let groupsCol;
     if (!collectionExists("groups")) {
         groupsCol = new Collection();
@@ -45,7 +72,7 @@ onAfterBootstrap((e) => {
         groupsCol = dao.findCollectionByNameOrId("groups");
     }
 
-    // 2. Extender colección del sistema: users
+    // 3. Extender colección del sistema: users
     const usersCol = dao.findCollectionByNameOrId("users");
     let usersUpdated = false;
 
@@ -66,13 +93,11 @@ onAfterBootstrap((e) => {
     }
 
     if (!usersCol.schema.getFieldByName("storage_quota")) {
-        // Cuota en bytes (0 = ilimitado)
         usersCol.schema.addField(helperField("storage_quota", "number", false));
         usersUpdated = true;
     }
 
     if (!usersCol.schema.getFieldByName("force_password_change")) {
-        // Marca si el usuario debe cambiar su clave temporal en el siguiente login
         usersCol.schema.addField(helperField("force_password_change", "bool", false));
         usersUpdated = true;
     }
@@ -81,10 +106,10 @@ onAfterBootstrap((e) => {
         dao.saveCollection(usersCol);
     }
 
-    // Regla de seguridad RLS: Propietario O Miembro del Grupo O Admin de la App
+    // Regla de seguridad RLS: Propietario O Miembro de Grupo O Admin de la App
     const rbacRule = "@request.auth.id != '' && (owner = @request.auth.id || (is_group = true && @request.auth.user_group = group) || @request.auth.role = 'admin')";
 
-    // 3. Colección: folders (Estructura jerárquica)
+    // 4. Colección: folders (Estructura jerárquica)
     let foldersCol;
     if (!collectionExists("folders")) {
         foldersCol = new Collection();
@@ -109,7 +134,6 @@ onAfterBootstrap((e) => {
 
         dao.saveCollection(foldersCol);
 
-        // Relación autoreferenciada para carpetas hijas
         foldersCol.schema.addField(helperField("parent", "relation", false, {
             collectionId: foldersCol.id,
             maxSelect: 1
@@ -119,7 +143,7 @@ onAfterBootstrap((e) => {
         foldersCol = dao.findCollectionByNameOrId("folders");
     }
 
-    // 4. Colección: files (Metadatos y almacenamiento de ficheros)
+    // 5. Colección: files (Metadatos y almacenamiento de ficheros)
     if (!collectionExists("files")) {
         const filesCol = new Collection();
         filesCol.name = "files";
@@ -155,7 +179,7 @@ onAfterBootstrap((e) => {
         dao.saveCollection(filesCol);
     }
 
-    // 5. Colección: calendar_events (Agenda)
+    // 6. Colección: calendar_events (Agenda)
     if (!collectionExists("calendar_events")) {
         const calCol = new Collection();
         calCol.name = "calendar_events";
@@ -185,7 +209,7 @@ onAfterBootstrap((e) => {
         dao.saveCollection(calCol);
     }
 
-    // 6. Colección: contacts (Contactos)
+    // 7. Colección: contacts (Contactos)
     if (!collectionExists("contacts")) {
         const contactsCol = new Collection();
         contactsCol.name = "contacts";
@@ -214,7 +238,7 @@ onAfterBootstrap((e) => {
         dao.saveCollection(contactsCol);
     }
 
-    // 7. Configuración automática de PocketBase hacia el S3 interno cifrado (rclone serve s3)
+    // 8. Configuración automática de PocketBase hacia el S3 interno cifrado (rclone serve s3)
     const settings = dao.findSettings();
     if (!settings.s3.enabled) {
         settings.s3.enabled = true;
@@ -228,7 +252,7 @@ onAfterBootstrap((e) => {
         console.log("[CONFIG] Almacenamiento S3 interno cifrado conectado.");
     }
 
-    // 8. Creación del Administrador Inicial si la base está limpia
+    // 9. Creación del Administrador Inicial si la base está limpia
     const totalUsers = dao.findRecordsByFilter("users", "1=1", "", 1, 0).length;
     if (totalUsers === 0) {
         const defaultAdmin = new Record(usersCol);
@@ -236,8 +260,8 @@ onAfterBootstrap((e) => {
         defaultAdmin.setEmail("admin@despacho.local");
         defaultAdmin.setPassword("Admin12345!");
         defaultAdmin.set("role", "admin");
-        defaultAdmin.set("force_password_change", true); // Exige cambio inmediato
-        defaultAdmin.set("storage_quota", 0);            // Ilimitado
+        defaultAdmin.set("force_password_change", true);
+        defaultAdmin.set("storage_quota", 0);
         defaultAdmin.setVerified(true);
 
         dao.saveRecord(defaultAdmin);
@@ -246,8 +270,7 @@ onAfterBootstrap((e) => {
 });
 
 /**
- * 9. Hook de seguridad: Todo nuevo usuario creado por un administrador
- * nace con la obligación de cambiar su contraseña en el primer inicio de sesión.
+ * 10. Hook de seguridad: Clave temporal forzada en usuarios nuevos
  */
 onRecordBeforeCreateRequest((e) => {
     if (e.collection.name === "users") {
