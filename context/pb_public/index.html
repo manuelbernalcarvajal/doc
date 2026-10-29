@@ -70,11 +70,6 @@
 
         <!-- Contenido Central -->
         <main class="main-content">
-            <!-- Banner de recomendación de seguridad -->
-            <div id="security-warning-banner" class="alert-error" style="display: none; margin: 1rem 1.5rem 0 1.5rem; border-radius: var(--radius);">
-                🛡️ <strong>Recomendación de seguridad:</strong> Protege tu cuenta activando el segundo factor (TOTP/MFA).
-            </div>
-
             <!-- Barra Superior -->
             <header class="topbar">
                 <div class="view-header">
@@ -147,7 +142,7 @@
                     <!-- Tarjeta 1: Personalización Visual y Marca -->
                     <div class="admin-card">
                         <h3>Personalización de Marca</h3>
-                        <p class="admin-desc">Ajustes visuales e identidad del despacho.</p>
+                        <p class="admin-desc">Identidad del despacho almacenada centralmente.</p>
                         <form id="admin-customization-form">
                             <div class="form-group">
                                 <label for="setting-app-name">Nombre de la Aplicación</label>
@@ -175,10 +170,32 @@
                         </form>
                     </div>
 
-                    <!-- Tarjeta 2: Servidor SMTP para Avisos de Calendario -->
+                    <!-- Tarjeta 2: Suite Ofimática Externa (WOPI) -->
+                    <div class="admin-card">
+                        <h3>Editor Ofimático en Línea (WOPI)</h3>
+                        <p class="admin-desc">Conexión con Collabora, OnlyOffice o EuroOffice para co-edición en directo.</p>
+                        <form id="admin-wopi-form">
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="wopi-enabled"> Activar edición ofimática (WOPI)
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label for="wopi-server-url">URL del Servidor Ofimático</label>
+                                <input type="url" id="wopi-server-url" placeholder="https://collabora.tudominio.com">
+                            </div>
+                            <div class="form-group">
+                                <label for="wopi-public-url">URL Pública de este Monolito (Opcional)</label>
+                                <input type="url" id="wopi-public-url" placeholder="https://nube.tudominio.com (por defecto origen web)">
+                            </div>
+                            <button type="submit" class="btn btn-primary btn-block">Guardar WOPI</button>
+                        </form>
+                    </div>
+
+                    <!-- Tarjeta 3: Servidor SMTP para Avisos de Calendario -->
                     <div class="admin-card">
                         <h3>Servidor de Correo (SMTP)</h3>
-                        <p class="admin-desc">Permite enviar recordatorios automáticos de agenda.</p>
+                        <p class="admin-desc">Recordatorios automáticos de citas y agenda.</p>
                         <form id="admin-smtp-form">
                             <div class="form-group">
                                 <label>
@@ -187,7 +204,7 @@
                             </div>
                             <div class="form-group">
                                 <label for="smtp-host">Servidor / Host</label>
-                                <input type="text" id="smtp-host" placeholder="smtp.mailgun.org o similar">
+                                <input type="text" id="smtp-host" placeholder="smtp.mailgun.org">
                             </div>
                             <div class="form-group">
                                 <label for="smtp-port">Puerto</label>
@@ -207,7 +224,7 @@
                             </div>
                             <div class="form-group">
                                 <label for="smtp-sender-name">Nombre Remitente</label>
-                                <input type="text" id="smtp-sender-name" value="Nube Notificaciones">
+                                <input type="text" id="smtp-sender-name" value="Nube Despacho">
                             </div>
                             <div class="form-group">
                                 <label>
@@ -216,17 +233,17 @@
                             </div>
                             <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
                                 <button type="submit" class="btn btn-primary" style="flex: 1;">Guardar SMTP</button>
-                                <button type="button" id="btn-test-smtp" class="btn btn-secondary">Probar Envío</button>
+                                <button type="button" id="btn-test-smtp" class="btn btn-secondary">Probar</button>
                             </div>
                         </form>
                     </div>
 
-                    <!-- Tarjeta 3: Gestión de Usuarios -->
+                    <!-- Tarjeta 4: Gestión de Usuarios -->
                     <div class="admin-card" style="grid-column: 1 / -1;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
                             <div>
                                 <h3>Usuarios y Cuotas</h3>
-                                <p class="admin-desc" style="margin-bottom: 0;">Gestión de permisos y límites de almacenamiento.</p>
+                                <p class="admin-desc" style="margin-bottom: 0;">Gestión de accesos y almacenamiento por usuario.</p>
                             </div>
                             <button id="btn-new-user" class="btn btn-primary btn-sm">➕ Crear Usuario</button>
                         </div>
@@ -252,6 +269,15 @@
         </main>
     </div>
 
+    <!-- Modal WOPI para Edición de Documentos a Pantalla Completa -->
+    <div id="wopi-modal" class="modal-backdrop-fullscreen" style="display: none;">
+        <div class="wopi-header">
+            <span id="wopi-doc-title">Documento</span>
+            <button id="btn-close-wopi" class="btn btn-secondary btn-sm">✖ Cerrar Editor</button>
+        </div>
+        <iframe id="wopi-iframe" allow="fullscreen" class="wopi-frame"></iframe>
+    </div>
+
     <!-- Modal de Subida con Métricas Exactas (MB y %) -->
     <div id="upload-modal" class="modal-backdrop" style="display: none;">
         <div class="modal-box">
@@ -267,7 +293,7 @@
         </div>
     </div>
 
-    <!-- Modal Genérico (Carpetas, Contactos, Eventos, Usuarios y Cambio de Clave) -->
+    <!-- Modal Genérico (Carpetas, Contactos, Eventos y Cambio de Clave) -->
     <div id="generic-modal" class="modal-backdrop" style="display: none;">
         <div class="modal-box">
             <div class="modal-header">
