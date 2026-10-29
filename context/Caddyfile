@@ -1,19 +1,29 @@
 {$MY_DOMAIN:localhost} {
-    # Proxy inverso hacia PocketBase
-    reverse_proxy 127.0.0.1:8090 {
-        # Streaming continuo sin buffer: indispensable para eventos SSE en tiempo real
-        flush_interval -1
+    # Bloqueo tajante del panel interno de PocketBase desde fuera
+    # Devuelve 404 (como si no existiera) para no dar pistas a escáneres
+    @blocked_admin {
+        path /_/*
+        path /_
+    }
+    handle @blocked_admin {
+        respond "Not Found" 404
     }
 
-    # Desactiva el buffering de subida para archivos pesados (hasta 10 GB sin consumir RAM)
+    # Proxy hacia la API y la interfaz pública
+    handle {
+        reverse_proxy 127.0.0.1:8090 {
+            flush_interval -1
+        }
+    }
+
+    # Desactiva buffering para agilizar subidas
     request_body {
         max_size 10GB
     }
 
-    # Compresión ligera
     encode zstd gzip
 
-    # Cabeceras de endurecimiento y seguridad
+    # Cabeceras de seguridad
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
