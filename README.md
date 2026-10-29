@@ -48,6 +48,8 @@ services:
     # Opción A: En disco duro estándar (Recomendado)
     volumes:
       - pb_data:/pb_data
+      - caddy_data:/data
+      - caddy_config:/config
 
     # Opción B: Modo RAM Pura (Comenta 'volumes' y descomenta 'tmpfs')
     # tmpfs:
@@ -58,6 +60,8 @@ services:
 volumes:
   pb_data:
     driver: local
+  caddy_data:
+  caddy_config:
 ```
 
 ### 3. Crear el archivo `.env`
@@ -71,6 +75,7 @@ Crea tu archivo `.env` y rellena tus datos:
 ```env
 # Dominio para HTTPS automático (o localhost para local)
 MY_DOMAIN=nube.tudominio.com
+INITIAL_ADMIN_PASSWORD=cambia_esta_clave_por_una_larga_y_unica
 
 # === DATOS DE TU PROVEEDOR S3 EXTERNO ===
 # En Cloudflare R2: https://<account_id>.r2.cloudflarestorage.com
@@ -79,8 +84,8 @@ MY_DOMAIN=nube.tudominio.com
 EXTERNAL_S3_ENDPOINT=https://tu-cuenta.r2.cloudflarestorage.com
 EXTERNAL_S3_REGION=auto
 EXTERNAL_S3_BUCKET=mi-nube-datos
-EXTERNAL_S3_ACCESS_KEY=tu_access_key
-EXTERNAL_S3_SECRET_KEY=tu_secret_key
+EXTERNAL_S3_ACCESS_KEY_ID=tu_access_key
+EXTERNAL_S3_SECRET_ACCESS_KEY=tu_secret_key
 
 # === CIFRADO ZERO-KNOWLEDGE (AES-256) ===
 # ¡IMPORTANTE! Si pierdes estas claves, los datos en el S3 son IRRECUPERABLES
@@ -115,11 +120,9 @@ docker compose logs -f
 ## 🔑 Primer Inicio de Sesión
 
 1. Entra desde tu navegador a `https://nube.tudominio.com` (o `http://localhost`).
-2. Autentícate con las credenciales de fábrica:
-   * **Usuario:** `admin` (o `admin@despacho.local`)
-   * **Contraseña temporal:** `Admin12345!`
+2. Autentícate con el usuario `admin` y la contraseña definida en `INITIAL_ADMIN_PASSWORD`.
 3. **Cambio forzado de clave:** La app te exigirá inmediatamente escribir tu contraseña personal nueva antes de permitirte entrar.
-4. *(Recomendado)* Entra en tu perfil y activa **TOTP** para proteger tu acceso con 2FA.
+4. *(Recomendado)* Activa 2FA si tu configuración de PocketBase lo permite.
 
 ---
 

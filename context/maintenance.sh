@@ -12,7 +12,7 @@ while true; do
     # 1. Purga de subidas multipartes incompletas en el bucket S3 externo
     if [ -f "/tmp/rclone.conf" ] && [ -n "$EXTERNAL_S3_BUCKET" ]; then
         echo "[maintenance] Purgando fragmentos incompletos en el bucket S3 remoto (${EXTERNAL_S3_BUCKET})..."
-        rclone --config /tmp/rclone.conf cleanup "external_s3:${EXTERNAL_S3_BUCKET}" 2>&1 | sed -u 's/^/[maintenance-rclone] /' || true
+        rclone --config /tmp/rclone.conf cleanup "raw_s3:${EXTERNAL_S3_BUCKET}" 2>&1 | sed 's/^/[maintenance-rclone] /' || true
     fi
 
     # 2. Vaciado de caches temporales de Rclone en memoria/disco

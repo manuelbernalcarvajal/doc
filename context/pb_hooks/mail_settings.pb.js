@@ -3,7 +3,7 @@
 /**
  * 1. Asegurar campo 'notified' en calendar_events al arrancar
  */
-onAfterBootstrap((e) => {
+onAfterBootstrap(() => {
     try {
         const calCol = $app.dao().findCollectionByNameOrId("calendar_events");
         if (!calCol.schema.getFieldByName("notified")) {
