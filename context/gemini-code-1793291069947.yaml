@@ -1,0 +1,11 @@
+dbs:
+  - path: /pb_data/data.db
+    replicas:
+      - type: s3
+        endpoint: http://127.0.0.1:9000
+        bucket: monolith-data
+        path: db
+        access-key-id: monolith_internal
+        secret-access-key: monolith_internal_secret_98765
+        region: us-east-1
+        force-path-style: true
