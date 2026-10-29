@@ -1,0 +1,14 @@
+# Variables de entorno con claves reales
+.env
+
+# Directorio local de datos y base de datos SQLite efímera
+pb_data/
+*.db
+*.db-shm
+*.db-wal
+
+# Ficheros temporales del sistema y editores
+.DS_Store
+Thumbs.db
+*.swp
+*~
