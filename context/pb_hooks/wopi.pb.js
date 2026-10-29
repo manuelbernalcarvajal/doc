@@ -124,6 +124,9 @@ routerAdd("POST", "/wopi/files/:fileId", (c) => {
     const session = getWopiSession(c);
     if (!session) return c.json(401, { error: "Token no válido." });
 
+    const fileId = c.pathParam("fileId");
+    if (session.fileId !== fileId) return c.json(403, { error: "Token no coincide con el archivo." });
+
     const override = c.request().header.get("X-WOPI-Override");
     const lock = c.request().header.get("X-WOPI-Lock");
 

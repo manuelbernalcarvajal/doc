@@ -7,6 +7,9 @@
  * Ruta: POST /api/custom/upload-chunk
  */
 routerAdd("POST", "/api/custom/upload-chunk", (c) => {
+    const MAX_FILE_SIZE = 10 * 1024 * 1024 * 1024;
+    const MAX_CHUNK_SIZE = 32 * 1024 * 1024;
+
     // 1. Verificación de sesión activa
     const authRecord = c.get("authRecord");
     if (!authRecord) {
@@ -45,6 +48,11 @@ routerAdd("POST", "/api/custom/upload-chunk", (c) => {
     // Guardado del fragmento en disco temporal
     const chunkPath = `${chunkDir}/${chunkIndex}.part`;
     c.saveUploadedFile(chunkFile, chunkPath);
+    const chunkStat = $os.stat(chunkPath);
+    if (!chunkStat || chunkStat.size() > MAX_CHUNK_SIZE) {
+        $os.removeAll(chunkDir);
+        return c.json(413, { error: "El fragmento supera el tamaño máximo permitido." });
+    }
 
     // 4. Si aún quedan fragmentos pendientes, confirmamos recepción
     if (chunkIndex + 1 < totalChunks) {
@@ -72,6 +80,28 @@ routerAdd("POST", "/api/custom/upload-chunk", (c) => {
             const partBytes = $os.readFile(`${chunkDir}/${i}.part`);
             parts.push(partBytes);
             totalLength += partBytes.length;
+            if (totalLength > MAX_FILE_SIZE) {
+                throw new Error("El archivo supera el límite máximo de 10 GB.");
+            }
+        }
+
+        const quota = authRecord.getInt("storage_quota");
+        if (quota > 0) {
+            const existingFiles = $app.dao().findRecordsByFilter(
+                "files",
+                "owner = {:owner} && (trashed = false || trashed = null)",
+                "",
+                10000,
+                0,
+                { owner: authRecord.id }
+            );
+            let usedBytes = 0;
+            for (let existing of existingFiles) {
+                usedBytes += existing.getInt("size");
+            }
+            if (usedBytes + totalLength > quota) {
+                throw new Error("La cuota de almacenamiento del usuario ha sido excedida.");
+            }
         }
 
         // Fusión contigua de memoria en un TypedArray binario

@@ -131,7 +131,9 @@ onAfterBootstrap((e) => {
     usersCol.listRule = "@request.auth.role = 'admin'";
     usersCol.viewRule = "@request.auth.role = 'admin' || id = @request.auth.id";
     usersCol.createRule = "@request.auth.role = 'admin'";
-    usersCol.updateRule = "@request.auth.role = 'admin' || id = @request.auth.id";
+    // Los usuarios no pueden modificar directamente sus campos de seguridad.
+    // El cambio inicial de contraseña se expone mediante una ruta controlada.
+    usersCol.updateRule = "@request.auth.role = 'admin'";
     usersCol.deleteRule = "@request.auth.role = 'admin'";
     dao.saveCollection(usersCol);
 
@@ -311,3 +313,22 @@ onRecordBeforeCreateRequest((e) => {
         e.record.set("force_password_change", true);
     }
 });
+
+routerAdd("POST", "/api/custom/change-password", (c) => {
+    const authRecord = c.get("authRecord");
+    if (!authRecord) return c.json(401, { error: "No autenticado." });
+
+    const data = $apis.requestInfo(c).data;
+    const password = String(data.password || "");
+    const passwordConfirm = String(data.passwordConfirm || "");
+
+    if (password.length < 8 || password !== passwordConfirm) {
+        return c.json(400, { error: "La contraseña debe tener al menos 8 caracteres y coincidir con su confirmación." });
+    }
+
+    authRecord.setPassword(password);
+    authRecord.set("force_password_change", false);
+    $app.dao().saveRecord(authRecord);
+
+    return c.json(200, { status: "success" });
+}, $apis.requireRecordAuth());
