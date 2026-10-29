@@ -882,13 +882,12 @@ function modalForcePasswordChange() {
         }
 
         try {
-            const res = await fetch(`${CONFIG.API_URL}/api/collections/users/records/${state.user.id}`, {
-                method: "PATCH",
+            const res = await fetch(`${CONFIG.API_URL}/api/custom/change-password`, {
+                method: "POST",
                 headers: getHeaders(),
                 body: JSON.stringify({
                     password: p1,
                     passwordConfirm: p2,
-                    force_password_change: false
                 })
             });
 

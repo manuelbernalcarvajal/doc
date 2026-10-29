@@ -1,8 +1,8 @@
-FROM caddy:2-alpine AS caddy_bin
-FROM litestream/litestream:0.3.13 AS litestream_bin
-FROM rclone/rclone:latest AS rclone_bin
+FROM caddy:2.8.4-alpine@sha256:b95ed06fbc6d74d24a40902090c8cc6086ce7d08ba60a3a7e8e62bf164a9d7bb AS caddy_bin
+FROM litestream/litestream:0.3.13@sha256:a932d9801f9d8f11ed0566aa105ef866c097c00ef1191b88a8aa0ff8e78b4071 AS litestream_bin
+FROM rclone/rclone:1.68.2@sha256:41388051445353047e007aa8978ebe224a1efdd6edc55fb746656d19ddf59de2 AS rclone_bin
 
-FROM alpine:3.20
+FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 
 # 1. Dependencias del sistema
 RUN apk add --no-cache supervisor bash curl ca-certificates netcat-openbsd tzdata unzip
@@ -14,8 +14,12 @@ COPY --from=rclone_bin /usr/local/bin/rclone /usr/local/bin/rclone
 
 # 3. Descarga e instalación de PocketBase
 ARG PB_VERSION=0.22.20
+ARG PB_SHA256=f430bd045e0981ca6ecec91cea9bbaf10fcfcf541f48e984b1d7069940010635
 ADD https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/pocketbase_${PB_VERSION}_linux_amd64.zip /tmp/pb.zip
-RUN unzip /tmp/pb.zip -d /usr/local/bin/ && rm /tmp/pb.zip && chmod +x /usr/local/bin/pocketbase
+RUN echo "${PB_SHA256}  /tmp/pb.zip" | sha256sum -c - \
+    && unzip /tmp/pb.zip -d /usr/local/bin/ \
+    && rm /tmp/pb.zip \
+    && chmod +x /usr/local/bin/pocketbase
 
 # 4. Estructura de directorios base
 RUN mkdir -p /pb_data /pb_hooks /pb_public /etc/caddy
