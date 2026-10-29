@@ -1,13 +1,18 @@
 /**
  * Cliente SPA Monolito (Vanilla JS ES6+)
- * Theming corporativo centralizado en base de datos, subida por fragmentos,
- * recordatorios SMTP de agenda, contactos y control de claves.
+ * Theming centralizado en BD, subida fragmentada, recordatorios SMTP,
+ * contactos y soporte WOPI para edición ofimática en línea.
  */
 
 const CONFIG = {
-    CHUNK_SIZE: 20 * 1024 * 1024, // 20 MB por fragmento
+    CHUNK_SIZE: 20 * 1024 * 1024,
     API_URL: window.location.origin
 };
+
+const OFFICE_EXTENSIONS = [
+    ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
+    ".odt", ".ods", ".odp", ".rtf", ".txt", ".csv"
+];
 
 const state = {
     token: localStorage.getItem("pb_token") || "",
@@ -17,7 +22,8 @@ const state = {
     folderPath: [],
     contactsCache: [],
     calendarEventsCache: [],
-    settingsRecordId: null
+    settingsRecordId: null,
+    wopiEnabled: false
 };
 
 // ==========================================
@@ -54,6 +60,11 @@ function initEventListeners() {
         document.getElementById("color-hex-label").textContent = e.target.value;
     });
 
+    const wopiForm = document.getElementById("admin-wopi-form");
+    if (wopiForm) {
+        wopiForm.addEventListener("submit", handleSaveWopi);
+    }
+
     const smtpForm = document.getElementById("admin-smtp-form");
     if (smtpForm) {
         smtpForm.addEventListener("submit", handleSaveSmtp);
@@ -66,6 +77,7 @@ function initEventListeners() {
     }
 
     document.getElementById("modal-close").addEventListener("click", closeModal);
+    document.getElementById("btn-close-wopi").addEventListener("click", closeWopiEditor);
 }
 
 async function verifySession() {
@@ -244,7 +256,7 @@ function renderTopbarActions(viewName) {
 }
 
 // ==========================================
-// 3. ARCHIVOS Y CARPETAS
+// 3. ARCHIVOS Y WOPI
 // ==========================================
 
 async function loadFiles() {
@@ -296,6 +308,14 @@ async function loadFiles() {
         filesData.items.forEach(file => {
             const tr = document.createElement("tr");
             const fileUrl = `${CONFIG.API_URL}/api/files/files/${file.id}/${file.file}?token=${state.token}`;
+            const fileNameLower = file.name.toLowerCase();
+            const isOfficeDoc = OFFICE_EXTENSIONS.some(ext => fileNameLower.endsWith(ext));
+
+            let editBtn = "";
+            if (isOfficeDoc && state.wopiEnabled) {
+                editBtn = `<button class="btn btn-primary btn-sm" style="margin-right:0.25rem;" onclick="launchWopiEditor('${file.id}')" title="Editar en línea con Collabora/OnlyOffice">📝 Editar</button>`;
+            }
+
             tr.innerHTML = `
                 <td>📄 ${escapeHtml(file.name)}</td>
                 <td>${formatBytes(file.size)}</td>
@@ -303,6 +323,7 @@ async function loadFiles() {
                 <td>${file.is_group ? "Grupo" : "Personal"}</td>
                 <td>${formatDate(file.created)}</td>
                 <td class="text-right">
+                    ${editBtn}
                     <a href="${fileUrl}" target="_blank" download="${escapeHtml(file.name)}" class="btn btn-secondary btn-sm">⬇️</a>
                     <button class="btn btn-secondary btn-sm" onclick="trashFile('${file.id}')">🗑️</button>
                 </td>
@@ -312,6 +333,34 @@ async function loadFiles() {
     } catch (err) {
         tbody.innerHTML = `<tr><td colspan="6" class="text-center alert-error">Error al cargar: ${err.message}</td></tr>`;
     }
+}
+
+async function launchWopiEditor(fileId) {
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/custom/wopi-token`, {
+            method: "POST",
+            headers: getHeaders(),
+            body: JSON.stringify({ fileId: fileId })
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "No se pudo iniciar el editor");
+
+        document.getElementById("wopi-doc-title").textContent = `Editando: ${data.fileName}`;
+        const iframe = document.getElementById("wopi-iframe");
+        iframe.src = data.editorUrl;
+        document.getElementById("wopi-modal").style.display = "flex";
+    } catch (err) {
+        alert("Error WOPI: " + err.message);
+    }
+}
+
+function closeWopiEditor() {
+    const iframe = document.getElementById("wopi-iframe");
+    iframe.src = "about:blank";
+    document.getElementById("wopi-modal").style.display = "none";
+    loadFiles();
+    loadQuota();
 }
 
 function openFolder(folderId, folderName) {
@@ -560,7 +609,7 @@ async function deleteContact(id) {
 }
 
 // ==========================================
-// 7. ADMINISTRACIÓN (USUARIOS, SMTP, THEMING GLOBAL)
+// 7. ADMINISTRACIÓN
 // ==========================================
 
 async function loadAdminData() {
@@ -592,11 +641,12 @@ async function loadAdminData() {
     }
 
     loadSmtpSettings();
+    loadWopiSettings();
 }
 
 async function editUserQuota(userId, currentQuota) {
     const currentGB = currentQuota > 0 ? (currentQuota / (1024 * 1024 * 1024)).toFixed(0) : 0;
-    const newGB = prompt("Introduce el límite de cuota en Gigabytes (0 para ilimitado):", currentGB);
+    const newGB = prompt("Introduce la cuota en Gigabytes (0 para ilimitado):", currentGB);
     if (newGB === null) return;
 
     const bytes = parseInt(newGB, 10) * 1024 * 1024 * 1024;
@@ -606,6 +656,46 @@ async function editUserQuota(userId, currentQuota) {
         body: JSON.stringify({ storage_quota: bytes })
     });
     loadAdminData();
+}
+
+async function loadWopiSettings() {
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/collections/app_settings/records?perPage=1`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.items && data.items[0]) {
+            const s = data.items[0];
+            document.getElementById("wopi-enabled").checked = !!s.wopi_enabled;
+            document.getElementById("wopi-server-url").value = s.wopi_server_url || "";
+            document.getElementById("wopi-public-url").value = s.wopi_public_url || "";
+            state.wopiEnabled = !!s.wopi_enabled;
+        }
+    } catch (_) {}
+}
+
+async function handleSaveWopi(e) {
+    e.preventDefault();
+    const enabled = document.getElementById("wopi-enabled").checked;
+    const serverUrl = document.getElementById("wopi-server-url").value.trim();
+    const publicUrl = document.getElementById("wopi-public-url").value.trim();
+
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/collections/app_settings/records/${state.settingsRecordId}`, {
+            method: "PATCH",
+            headers: getHeaders(),
+            body: JSON.stringify({
+                wopi_enabled: enabled,
+                wopi_server_url: serverUrl,
+                wopi_public_url: publicUrl
+            })
+        });
+
+        if (!res.ok) throw new Error("Fallo al guardar configuración WOPI");
+        state.wopiEnabled = enabled;
+        alert("Configuración WOPI actualizada con éxito.");
+    } catch (err) {
+        alert("Error: " + err.message);
+    }
 }
 
 async function loadSmtpSettings() {
@@ -673,24 +763,24 @@ async function handleTestSmtp() {
     } catch (err) {
         alert("Error de conexión: " + err.message);
     } finally {
-        btn.textContent = "Probar Envío";
+        btn.textContent = "Probar";
         btn.disabled = false;
     }
 }
 
 // ==========================================
-// 8. THEMING GLOBAL (PERSISTENTE EN SERVIDOR)
+// 8. THEMING GLOBAL
 // ==========================================
 
 async function fetchGlobalTheme() {
     try {
-        // Lectura pública desde la colección app_settings
         const res = await fetch(`${CONFIG.API_URL}/api/collections/app_settings/records?perPage=1`);
         if (res.ok) {
             const data = await res.json();
             if (data.items && data.items.length > 0) {
                 const s = data.items[0];
                 state.settingsRecordId = s.id;
+                state.wopiEnabled = !!s.wopi_enabled;
                 renderTheme(s.app_name, s.app_icon, s.accent_color);
                 return;
             }
@@ -726,14 +816,6 @@ async function handleSaveCustomization(e) {
     const icon = document.getElementById("setting-app-icon").value;
     const color = document.getElementById("setting-accent-color").value;
 
-    if (!state.settingsRecordId) {
-        try {
-            const check = await fetch(`${CONFIG.API_URL}/api/collections/app_settings/records?perPage=1`);
-            const d = await check.json();
-            if (d.items && d.items[0]) state.settingsRecordId = d.items[0].id;
-        } catch (_) {}
-    }
-
     try {
         const res = await fetch(`${CONFIG.API_URL}/api/collections/app_settings/records/${state.settingsRecordId}`, {
             method: "PATCH",
@@ -745,13 +827,9 @@ async function handleSaveCustomization(e) {
             })
         });
 
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.message || "Error al guardar el tema");
-        }
-
+        if (!res.ok) throw new Error("Error al guardar tema");
         renderTheme(name, icon, color);
-        alert("Personalización corporativa guardada con éxito en el servidor.");
+        alert("Personalización corporativa guardada en el servidor.");
     } catch (err) {
         alert("Fallo al guardar: " + err.message);
     }
@@ -775,7 +853,7 @@ function closeModal() {
 function modalForcePasswordChange() {
     openModal("Cambio Obligatorio de Contraseña", `
         <p style="font-size:0.875rem; color:var(--text-muted); margin-bottom:1rem;">
-            Tu cuenta tiene una clave temporal o requiere actualización por seguridad. Introduce una nueva contraseña (mínimo 8 caracteres).
+            Por seguridad, debes actualizar tu contraseña temporal (mínimo 8 caracteres).
         </p>
         <form id="form-force-pass">
             <div class="form-group">
@@ -783,10 +861,10 @@ function modalForcePasswordChange() {
                 <input type="password" id="new-password" minlength="8" required autofocus>
             </div>
             <div class="form-group">
-                <label>Confirmar Nueva Contraseña</label>
+                <label>Confirmar Contraseña</label>
                 <input type="password" id="new-password-confirm" minlength="8" required>
             </div>
-            <button type="submit" class="btn btn-primary btn-block">Establecer Nueva Contraseña</button>
+            <button type="submit" class="btn btn-primary btn-block">Guardar Nueva Contraseña</button>
             <div id="pass-change-error" class="alert-error" style="display: none; margin-top:0.75rem;"></div>
         </form>
     `, false);
@@ -843,7 +921,7 @@ function modalNewUser() {
                 <input type="password" id="new-user-pass" minlength="8" value="Temporal1234!" required>
             </div>
             <div class="form-group">
-                <label>Rol en la Aplicación</label>
+                <label>Rol</label>
                 <select id="new-user-role">
                     <option value="user">Usuario Estándar</option>
                     <option value="admin">Administrador</option>
@@ -853,9 +931,6 @@ function modalNewUser() {
                 <label>Cuota de Almacenamiento (GB, 0 = ilimitado)</label>
                 <input type="number" id="new-user-quota" value="10">
             </div>
-            <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:1rem;">
-                * El usuario estará obligado a cambiar esta contraseña en su primer inicio de sesión.
-            </p>
             <button type="submit" class="btn btn-primary btn-block">Crear Cuenta</button>
         </form>
     `);
@@ -884,7 +959,7 @@ function modalNewUser() {
         if (res.ok) {
             closeModal();
             loadAdminData();
-            alert(`Usuario ${email} creado correctamente con clave temporal.`);
+            alert(`Usuario ${email} creado correctamente.`);
         } else {
             const err = await res.json();
             alert("Error al crear usuario: " + JSON.stringify(err.data || err.message));
@@ -946,12 +1021,12 @@ function modalNewContact() {
                 <input type="tel" id="contact-phone">
             </div>
             <div class="form-group">
-                <label>Empresa / Organización</label>
+                <label>Empresa</label>
                 <input type="text" id="contact-company">
             </div>
             <div class="form-group">
                 <label>
-                    <input type="checkbox" id="contact-is-group"> Contacto compartido de grupo
+                    <input type="checkbox" id="contact-is-group"> Visible para todo el grupo
                 </label>
             </div>
             <button type="submit" class="btn btn-primary btn-block">Guardar Contacto</button>
@@ -996,10 +1071,10 @@ function modalNewEvent() {
             </div>
             <div class="form-group">
                 <label>Ubicación</label>
-                <input type="text" id="event-location" placeholder="Despacho 2, Sala de Juntas...">
+                <input type="text" id="event-location" placeholder="Sala 1...">
             </div>
             <div class="form-group">
-                <label>Descripción / Notas</label>
+                <label>Notas</label>
                 <textarea id="event-desc" rows="2" class="form-group"></textarea>
             </div>
             <div class="form-group">
