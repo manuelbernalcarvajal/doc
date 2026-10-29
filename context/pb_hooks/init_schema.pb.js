@@ -2,7 +2,7 @@
 
 /**
  * Inicializador idempotente del esquema de datos, almacenamiento S3 cifrado,
- * control de accesos (RBAC) y tema corporativo global.
+ * control de accesos (RBAC), tema corporativo y parámetros WOPI.
  */
 onAfterBootstrap((e) => {
     const dao = $app.dao();
@@ -25,13 +25,12 @@ onAfterBootstrap((e) => {
         }
     };
 
-    // 1. Colección: app_settings (Identidad visual global / Theming del servidor)
+    // 1. Colección: app_settings (Identidad visual, marca y ajuste WOPI)
     let settingsCol;
     if (!collectionExists("app_settings")) {
         settingsCol = new Collection();
         settingsCol.name = "app_settings";
         settingsCol.type = "base";
-        // Lectura pública para que la pantalla de login adopte los colores y marca
         settingsCol.listRule = "";
         settingsCol.viewRule = "";
         settingsCol.createRule = "@request.auth.role = 'admin'";
@@ -41,18 +40,41 @@ onAfterBootstrap((e) => {
         settingsCol.schema.addField(helperField("app_name", "text", true));
         settingsCol.schema.addField(helperField("app_icon", "text", true));
         settingsCol.schema.addField(helperField("accent_color", "text", true));
+        settingsCol.schema.addField(helperField("wopi_enabled", "bool", false));
+        settingsCol.schema.addField(helperField("wopi_server_url", "text", false));
+        settingsCol.schema.addField(helperField("wopi_public_url", "text", false));
 
         dao.saveCollection(settingsCol);
 
-        // Registro corporativo inicial por defecto
         const defaultTheme = new Record(settingsCol);
         defaultTheme.set("app_name", "Nube Monolito");
         defaultTheme.set("app_icon", "📁");
         defaultTheme.set("accent_color", "#2563eb");
+        defaultTheme.set("wopi_enabled", false);
+        defaultTheme.set("wopi_server_url", "");
+        defaultTheme.set("wopi_public_url", "");
         dao.saveRecord(defaultTheme);
+    } else {
+        settingsCol = dao.findCollectionByNameOrId("app_settings");
+        let modified = false;
+        if (!settingsCol.schema.getFieldByName("wopi_enabled")) {
+            settingsCol.schema.addField(helperField("wopi_enabled", "bool", false));
+            modified = true;
+        }
+        if (!settingsCol.schema.getFieldByName("wopi_server_url")) {
+            settingsCol.schema.addField(helperField("wopi_server_url", "text", false));
+            modified = true;
+        }
+        if (!settingsCol.schema.getFieldByName("wopi_public_url")) {
+            settingsCol.schema.addField(helperField("wopi_public_url", "text", false));
+            modified = true;
+        }
+        if (modified) {
+            dao.saveCollection(settingsCol);
+        }
     }
 
-    // 2. Colección: groups (Departamentos o equipos de trabajo)
+    // 2. Colección: groups (Departamentos o equipos)
     let groupsCol;
     if (!collectionExists("groups")) {
         groupsCol = new Collection();
@@ -72,7 +94,7 @@ onAfterBootstrap((e) => {
         groupsCol = dao.findCollectionByNameOrId("groups");
     }
 
-    // 3. Extender colección del sistema: users
+    // 3. Extender colección: users
     const usersCol = dao.findCollectionByNameOrId("users");
     let usersUpdated = false;
 
@@ -106,10 +128,10 @@ onAfterBootstrap((e) => {
         dao.saveCollection(usersCol);
     }
 
-    // Regla de seguridad RLS: Propietario O Miembro de Grupo O Admin de la App
+    // Regla de seguridad RLS
     const rbacRule = "@request.auth.id != '' && (owner = @request.auth.id || (is_group = true && @request.auth.user_group = group) || @request.auth.role = 'admin')";
 
-    // 4. Colección: folders (Estructura jerárquica)
+    // 4. Colección: folders
     let foldersCol;
     if (!collectionExists("folders")) {
         foldersCol = new Collection();
@@ -143,7 +165,7 @@ onAfterBootstrap((e) => {
         foldersCol = dao.findCollectionByNameOrId("folders");
     }
 
-    // 5. Colección: files (Metadatos y almacenamiento de ficheros)
+    // 5. Colección: files
     if (!collectionExists("files")) {
         const filesCol = new Collection();
         filesCol.name = "files";
@@ -179,7 +201,7 @@ onAfterBootstrap((e) => {
         dao.saveCollection(filesCol);
     }
 
-    // 6. Colección: calendar_events (Agenda)
+    // 6. Colección: calendar_events
     if (!collectionExists("calendar_events")) {
         const calCol = new Collection();
         calCol.name = "calendar_events";
@@ -209,7 +231,7 @@ onAfterBootstrap((e) => {
         dao.saveCollection(calCol);
     }
 
-    // 7. Colección: contacts (Contactos)
+    // 7. Colección: contacts
     if (!collectionExists("contacts")) {
         const contactsCol = new Collection();
         contactsCol.name = "contacts";
@@ -238,7 +260,7 @@ onAfterBootstrap((e) => {
         dao.saveCollection(contactsCol);
     }
 
-    // 8. Configuración automática de PocketBase hacia el S3 interno cifrado (rclone serve s3)
+    // 8. Almacenamiento S3 interno cifrado
     const settings = dao.findSettings();
     if (!settings.s3.enabled) {
         settings.s3.enabled = true;
@@ -252,7 +274,7 @@ onAfterBootstrap((e) => {
         console.log("[CONFIG] Almacenamiento S3 interno cifrado conectado.");
     }
 
-    // 9. Creación del Administrador Inicial si la base está limpia
+    // 9. Administrador inicial en caso de base de datos vacía
     const totalUsers = dao.findRecordsByFilter("users", "1=1", "", 1, 0).length;
     if (totalUsers === 0) {
         const defaultAdmin = new Record(usersCol);
@@ -265,12 +287,12 @@ onAfterBootstrap((e) => {
         defaultAdmin.setVerified(true);
 
         dao.saveRecord(defaultAdmin);
-        console.log("[BOOTSTRAP] Usuario inicial creado: admin / Admin12345! (Requiere cambio de clave)");
+        console.log("[BOOTSTRAP] Usuario inicial creado: admin / Admin12345!");
     }
 });
 
 /**
- * 10. Hook de seguridad: Clave temporal forzada en usuarios nuevos
+ * 10. Forzar clave temporal en nuevas cuentas
  */
 onRecordBeforeCreateRequest((e) => {
     if (e.collection.name === "users") {
