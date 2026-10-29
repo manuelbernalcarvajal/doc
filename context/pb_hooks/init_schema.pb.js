@@ -1,8 +1,8 @@
 /// <reference path="../pb_data/types.d.ts" />
 
 /**
- * Inicializador idempotente del esquema de datos y control de accesos (RBAC).
- * Se ejecuta automáticamente al arrancar PocketBase. Si las colecciones ya existen, no hace nada.
+ * Inicializador idempotente del esquema de datos, configuración de almacenamiento S3
+ * y control de accesos (RBAC) con directivas de cambio obligatorio de clave.
  */
 onAfterBootstrap((e) => {
     const dao = $app.dao();
@@ -25,7 +25,7 @@ onAfterBootstrap((e) => {
         }
     };
 
-    // 1. Colección: groups (Departamentos o equipos)
+    // 1. Colección: groups (Departamentos o equipos de trabajo)
     let groupsCol;
     if (!collectionExists("groups")) {
         groupsCol = new Collection();
@@ -66,8 +66,14 @@ onAfterBootstrap((e) => {
     }
 
     if (!usersCol.schema.getFieldByName("storage_quota")) {
-        // Cuota en bytes (por defecto 10 GB: 10737418240; 0 = ilimitado)
+        // Cuota en bytes (0 = ilimitado)
         usersCol.schema.addField(helperField("storage_quota", "number", false));
+        usersUpdated = true;
+    }
+
+    if (!usersCol.schema.getFieldByName("force_password_change")) {
+        // Marca si el usuario debe cambiar su clave temporal en el siguiente login
+        usersCol.schema.addField(helperField("force_password_change", "bool", false));
         usersUpdated = true;
     }
 
@@ -75,10 +81,10 @@ onAfterBootstrap((e) => {
         dao.saveCollection(usersCol);
     }
 
-    // Regla común de seguridad: Propietario O Miembro del Grupo O Admin de la App
+    // Regla de seguridad RLS: Propietario O Miembro del Grupo O Admin de la App
     const rbacRule = "@request.auth.id != '' && (owner = @request.auth.id || (is_group = true && @request.auth.user_group = group) || @request.auth.role = 'admin')";
 
-    // 3. Colección: folders (Estructura de carpetas)
+    // 3. Colección: folders (Estructura jerárquica)
     let foldersCol;
     if (!collectionExists("folders")) {
         foldersCol = new Collection();
@@ -103,7 +109,7 @@ onAfterBootstrap((e) => {
 
         dao.saveCollection(foldersCol);
 
-        // Relación autoreferenciada para carpetas anidadas
+        // Relación autoreferenciada para carpetas hijas
         foldersCol.schema.addField(helperField("parent", "relation", false, {
             collectionId: foldersCol.id,
             maxSelect: 1
@@ -149,7 +155,7 @@ onAfterBootstrap((e) => {
         dao.saveCollection(filesCol);
     }
 
-    // 5. Colección: calendar_events (Agenda individual y compartida)
+    // 5. Colección: calendar_events (Agenda)
     if (!collectionExists("calendar_events")) {
         const calCol = new Collection();
         calCol.name = "calendar_events";
@@ -179,7 +185,7 @@ onAfterBootstrap((e) => {
         dao.saveCollection(calCol);
     }
 
-    // 6. Colección: contacts (Libreta de contactos)
+    // 6. Colección: contacts (Contactos)
     if (!collectionExists("contacts")) {
         const contactsCol = new Collection();
         contactsCol.name = "contacts";
@@ -208,5 +214,43 @@ onAfterBootstrap((e) => {
         dao.saveCollection(contactsCol);
     }
 
-    console.log("[SCHEMA] Colecciones y reglas RBAC verificadas/inicializadas con éxito.");
+    // 7. Configuración automática de PocketBase hacia el S3 interno cifrado (rclone serve s3)
+    const settings = dao.findSettings();
+    if (!settings.s3.enabled) {
+        settings.s3.enabled = true;
+        settings.s3.endpoint = "http://127.0.0.1:9000";
+        settings.s3.bucket = "monolith-data";
+        settings.s3.region = "us-east-1";
+        settings.s3.accessKey = "monolith_internal";
+        settings.s3.secret = "monolith_internal_secret_98765";
+        settings.s3.forcePathStyle = true;
+        dao.saveSettings(settings);
+        console.log("[CONFIG] Almacenamiento S3 interno cifrado conectado.");
+    }
+
+    // 8. Creación del Administrador Inicial si la base está limpia
+    const totalUsers = dao.findRecordsByFilter("users", "1=1", "", 1, 0).length;
+    if (totalUsers === 0) {
+        const defaultAdmin = new Record(usersCol);
+        defaultAdmin.setUsername("admin");
+        defaultAdmin.setEmail("admin@despacho.local");
+        defaultAdmin.setPassword("Admin12345!");
+        defaultAdmin.set("role", "admin");
+        defaultAdmin.set("force_password_change", true); // Exige cambio inmediato
+        defaultAdmin.set("storage_quota", 0);            // Ilimitado
+        defaultAdmin.setVerified(true);
+
+        dao.saveRecord(defaultAdmin);
+        console.log("[BOOTSTRAP] Usuario inicial creado: admin / Admin12345! (Requiere cambio de clave)");
+    }
+});
+
+/**
+ * 9. Hook de seguridad: Todo nuevo usuario creado por un administrador
+ * nace con la obligación de cambiar su contraseña en el primer inicio de sesión.
+ */
+onRecordBeforeCreateRequest((e) => {
+    if (e.collection.name === "users") {
+        e.record.set("force_password_change", true);
+    }
 });
