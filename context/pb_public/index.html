@@ -17,8 +17,8 @@
             </div>
             <form id="login-form">
                 <div class="form-group">
-                    <label for="login-email">Correo Electrónico</label>
-                    <input type="email" id="login-email" required autocomplete="username" placeholder="usuario@despacho.com">
+                    <label for="login-email">Usuario o Correo Electrónico</label>
+                    <input type="text" id="login-email" required autocomplete="username" placeholder="admin o tu@email.com">
                 </div>
                 <div class="form-group">
                     <label for="login-password">Contraseña</label>
@@ -70,6 +70,11 @@
 
         <!-- Contenido Central -->
         <main class="main-content">
+            <!-- Banner de recomendación de seguridad -->
+            <div id="security-warning-banner" class="alert-error" style="display: none; margin: 1rem 1.5rem 0 1.5rem; border-radius: var(--radius);">
+                🛡️ <strong>Recomendación de seguridad:</strong> Protege tu cuenta activando el segundo factor (TOTP/MFA).
+            </div>
+
             <!-- Barra Superior -->
             <header class="topbar">
                 <div class="view-header">
@@ -107,13 +112,6 @@
 
             <!-- Sección: Calendario -->
             <section id="view-calendar" class="view-pane">
-                <div class="toolbar-pane">
-                    <div class="filter-group">
-                        <button class="btn btn-sm btn-filter active" data-cal-filter="all">Todos</button>
-                        <button class="btn btn-sm btn-filter" data-cal-filter="personal">Personales</button>
-                        <button class="btn btn-sm btn-filter" data-cal-filter="group">Grupo</button>
-                    </div>
-                </div>
                 <div class="cards-grid" id="calendar-events-list">
                     <!-- Eventos renderizados aquí -->
                 </div>
@@ -121,7 +119,7 @@
 
             <!-- Sección: Contactos -->
             <section id="view-contacts" class="view-pane">
-                <div class="toolbar-pane">
+                <div class="toolbar-pane" style="margin-bottom: 1rem;">
                     <input type="text" id="contact-search" class="input-search" placeholder="Buscar por nombre, email o empresa...">
                 </div>
                 <div class="table-container">
@@ -146,17 +144,17 @@
             <!-- Sección: Administración de la App -->
             <section id="view-admin" class="view-pane">
                 <div class="admin-grid">
-                    <!-- Tarjeta: Personalización Visual y Marca -->
+                    <!-- Tarjeta 1: Personalización Visual y Marca -->
                     <div class="admin-card">
-                        <h3>Personalización de la Aplicación</h3>
-                        <p class="admin-desc">Ajustes visuales y de identidad del despacho.</p>
+                        <h3>Personalización de Marca</h3>
+                        <p class="admin-desc">Ajustes visuales e identidad del despacho.</p>
                         <form id="admin-customization-form">
                             <div class="form-group">
                                 <label for="setting-app-name">Nombre de la Aplicación</label>
                                 <input type="text" id="setting-app-name" value="Nube Monolito" required>
                             </div>
                             <div class="form-group">
-                                <label for="setting-app-icon">Icono / Logotipo (Emoji o carácter)</label>
+                                <label for="setting-app-icon">Icono / Logotipo</label>
                                 <select id="setting-app-icon">
                                     <option value="📁">📁 Carpeta</option>
                                     <option value="⚖️">⚖️ Despacho / Balanza</option>
@@ -173,14 +171,65 @@
                                     <span id="color-hex-label">#2563eb</span>
                                 </div>
                             </div>
-                            <button type="submit" class="btn btn-primary">Guardar Personalización</button>
+                            <button type="submit" class="btn btn-primary btn-block">Guardar Identidad</button>
                         </form>
                     </div>
 
-                    <!-- Tarjeta: Gestión de Usuarios -->
+                    <!-- Tarjeta 2: Servidor SMTP para Avisos de Calendario -->
                     <div class="admin-card">
-                        <h3>Gestión de Usuarios</h3>
-                        <p class="admin-desc">Control de cuentas, cuotas y permisos.</p>
+                        <h3>Servidor de Correo (SMTP)</h3>
+                        <p class="admin-desc">Permite enviar recordatorios automáticos de agenda.</p>
+                        <form id="admin-smtp-form">
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="smtp-enabled"> Activar servicio SMTP
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label for="smtp-host">Servidor / Host</label>
+                                <input type="text" id="smtp-host" placeholder="smtp.mailgun.org o similar">
+                            </div>
+                            <div class="form-group">
+                                <label for="smtp-port">Puerto</label>
+                                <input type="number" id="smtp-port" value="587">
+                            </div>
+                            <div class="form-group">
+                                <label for="smtp-user">Usuario SMTP</label>
+                                <input type="text" id="smtp-user" placeholder="usuario@servidor.com">
+                            </div>
+                            <div class="form-group">
+                                <label for="smtp-pass">Contraseña SMTP</label>
+                                <input type="password" id="smtp-pass" placeholder="••••••••">
+                            </div>
+                            <div class="form-group">
+                                <label for="smtp-sender-address">Email Remitente</label>
+                                <input type="email" id="smtp-sender-address" placeholder="no-reply@tudominio.com">
+                            </div>
+                            <div class="form-group">
+                                <label for="smtp-sender-name">Nombre Remitente</label>
+                                <input type="text" id="smtp-sender-name" value="Nube Notificaciones">
+                            </div>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="smtp-tls" checked> Forzar TLS / STARTTLS
+                                </label>
+                            </div>
+                            <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
+                                <button type="submit" class="btn btn-primary" style="flex: 1;">Guardar SMTP</button>
+                                <button type="button" id="btn-test-smtp" class="btn btn-secondary">Probar Envío</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Tarjeta 3: Gestión de Usuarios -->
+                    <div class="admin-card" style="grid-column: 1 / -1;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                            <div>
+                                <h3>Usuarios y Cuotas</h3>
+                                <p class="admin-desc" style="margin-bottom: 0;">Gestión de permisos y límites de almacenamiento.</p>
+                            </div>
+                            <button id="btn-new-user" class="btn btn-primary btn-sm">➕ Crear Usuario</button>
+                        </div>
                         <div class="table-container">
                             <table class="data-table">
                                 <thead>
@@ -188,6 +237,7 @@
                                         <th>Usuario</th>
                                         <th>Rol</th>
                                         <th>Cuota</th>
+                                        <th>Clave Temporal</th>
                                         <th class="text-right">Acciones</th>
                                     </tr>
                                 </thead>
@@ -217,7 +267,7 @@
         </div>
     </div>
 
-    <!-- Modal Genérico para Formularios Rápidos (Crear carpeta, contacto, evento) -->
+    <!-- Modal Genérico (Carpetas, Contactos, Eventos, Usuarios y Cambio de Clave) -->
     <div id="generic-modal" class="modal-backdrop" style="display: none;">
         <div class="modal-box">
             <div class="modal-header">
@@ -230,7 +280,6 @@
         </div>
     </div>
 
-    <!-- Script de lógica sin dependencias de terceros -->
     <script src="app.js"></script>
 </body>
 </html>
