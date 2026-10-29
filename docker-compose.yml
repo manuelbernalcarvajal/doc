@@ -14,3 +14,9 @@ services:
       - ./pb_data:/pb_data
       - ./context/pb_hooks:/pb_hooks
       - ./context/pb_public:/pb_public
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

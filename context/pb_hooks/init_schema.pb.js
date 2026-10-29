@@ -128,6 +128,13 @@ onAfterBootstrap((e) => {
         dao.saveCollection(usersCol);
     }
 
+    usersCol.listRule = "@request.auth.role = 'admin'";
+    usersCol.viewRule = "@request.auth.role = 'admin' || id = @request.auth.id";
+    usersCol.createRule = "@request.auth.role = 'admin'";
+    usersCol.updateRule = "@request.auth.role = 'admin' || id = @request.auth.id";
+    usersCol.deleteRule = "@request.auth.role = 'admin'";
+    dao.saveCollection(usersCol);
+
     // Regla de seguridad RLS
     const rbacRule = "@request.auth.id != '' && (owner = @request.auth.id || (is_group = true && @request.auth.user_group = group) || @request.auth.role = 'admin')";
 
@@ -277,17 +284,22 @@ onAfterBootstrap((e) => {
     // 9. Administrador inicial en caso de base de datos vacía
     const totalUsers = dao.findRecordsByFilter("users", "1=1", "", 1, 0).length;
     if (totalUsers === 0) {
+        const initialAdminPassword = $os.getenv("INITIAL_ADMIN_PASSWORD");
+        if (!initialAdminPassword) {
+            throw new Error("INITIAL_ADMIN_PASSWORD es obligatorio para crear el administrador inicial.");
+        }
+
         const defaultAdmin = new Record(usersCol);
         defaultAdmin.setUsername("admin");
         defaultAdmin.setEmail("admin@despacho.local");
-        defaultAdmin.setPassword("Admin12345!");
+        defaultAdmin.setPassword(initialAdminPassword);
         defaultAdmin.set("role", "admin");
         defaultAdmin.set("force_password_change", true);
         defaultAdmin.set("storage_quota", 0);
         defaultAdmin.setVerified(true);
 
         dao.saveRecord(defaultAdmin);
-        console.log("[BOOTSTRAP] Usuario inicial creado: admin / Admin12345!");
+        console.log("[BOOTSTRAP] Usuario inicial creado: admin.");
     }
 });
 

@@ -40,7 +40,7 @@ routerAdd("POST", "/api/custom/upload-chunk", (c) => {
     }
 
     const chunkDir = `/tmp/pb_chunks/${uploadId}`;
-    $os.mkdirAll(chunkDir, 0755);
+    $os.mkdirAll(chunkDir, 493);
 
     // Guardado del fragmento en disco temporal
     const chunkPath = `${chunkDir}/${chunkIndex}.part`;
@@ -82,7 +82,7 @@ routerAdd("POST", "/api/custom/upload-chunk", (c) => {
             offset += p.length;
         }
 
-        $os.writeFile(assembledPath, mergedBuffer, 0644);
+        $os.writeFile(assembledPath, mergedBuffer, 420);
 
         // 6. Creación del registro en PocketBase (despacho automático al S3 cifrado)
         const collection = $app.dao().findCollectionByNameOrId("files");

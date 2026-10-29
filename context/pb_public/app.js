@@ -918,7 +918,7 @@ function modalNewUser() {
             </div>
             <div class="form-group">
                 <label>Contraseña Temporal (mínimo 8 caracteres)</label>
-                <input type="password" id="new-user-pass" minlength="8" value="Temporal1234!" required>
+                <input type="password" id="new-user-pass" minlength="8" required>
             </div>
             <div class="form-group">
                 <label>Rol</label>

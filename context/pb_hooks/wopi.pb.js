@@ -179,7 +179,7 @@ routerAdd("POST", "/wopi/files/:fileId/contents", (c) => {
     const file = $app.dao().findRecordById("files", fileId);
     if (!file) return c.json(404, { error: "Archivo no encontrado." });
 
-    const rawContent = readerToString(c.request().body);
+    const rawContent = readerToBytes(c.request().body);
     const tempPath = `/tmp/wopi_${fileId}_${Date.now()}.tmp`;
     $os.writeFile(tempPath, rawContent);
 

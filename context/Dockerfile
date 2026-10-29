@@ -5,7 +5,7 @@ FROM rclone/rclone:latest AS rclone_bin
 FROM alpine:3.20
 
 # 1. Dependencias del sistema
-RUN apk add --no-cache supervisor bash curl ca-certificates netcat-openbsd tzdata
+RUN apk add --no-cache supervisor bash curl ca-certificates netcat-openbsd tzdata unzip
 
 # 2. Binarios oficiales de alta velocidad
 COPY --from=caddy_bin /usr/bin/caddy /usr/local/bin/caddy
