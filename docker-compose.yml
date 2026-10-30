@@ -1,7 +1,6 @@
 services:
   monolito:
-    build:
-      context: ./context
+    image: ghcr.io/manuelbernalcarvajal/doc@${DOC_IMAGE_DIGEST:?Define DOC_IMAGE_DIGEST with a verified sha256 digest}
     container_name: nube_monolito
     restart: unless-stopped
     init: true
@@ -11,10 +10,7 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      # Si quieres probarlo "en RAM" o completamente efímero, comenta este volumen:
-      - ./pb_data:/pb_data
-      - ./context/pb_hooks:/pb_hooks
-      - ./context/pb_public:/pb_public
+      - pb_data:/pb_data
       - caddy_data:/data
       - caddy_config:/config
     healthcheck:
@@ -26,5 +22,7 @@ services:
     stop_grace_period: 30s
 
 volumes:
+  pb_data:
+    driver: local
   caddy_data:
   caddy_config:

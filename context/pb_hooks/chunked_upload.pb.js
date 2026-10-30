@@ -126,7 +126,7 @@ routerAdd("POST", "/api/custom/upload-chunk", (c) => {
         record.set("size", totalLength);
         record.set("trashed", false);
 
-        const fileObj = $filesystem.File.newFromPath(assembledPath);
+        const fileObj = $filesystem.fileFromPath(assembledPath);
         record.set("file", fileObj);
 
         $app.dao().saveRecord(record);
