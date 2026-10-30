@@ -27,17 +27,26 @@ rclone --config /tmp/rclone.conf serve s3 crypt_remote:monolith-data \
     --addr 127.0.0.1:9000 \
     --auth-key "monolith_internal,monolith_internal_secret_98765" \
     --vfs-cache-mode off \
-    --buffer-size 0 &
+    --buffer-size 0 >/tmp/rclone-bootstrap.log 2>&1 &
 RCLONE_PID=$!
 
 # Esperar a que el puerto 9000 responda
 echo "Esperando que el gateway S3 interno esté disponible..."
+RCLONE_WAIT=0
 while ! nc -z 127.0.0.1 9000; do
     if ! kill -0 "$RCLONE_PID" 2>/dev/null; then
+        cat /tmp/rclone-bootstrap.log >&2
         echo "El gateway S3 interno no pudo iniciarse." >&2
         exit 1
     fi
+    if [ "$RCLONE_WAIT" -ge 300 ]; then
+        cat /tmp/rclone-bootstrap.log >&2
+        echo "Tiempo de espera agotado al iniciar el gateway S3 interno." >&2
+        kill "$RCLONE_PID" 2>/dev/null || true
+        exit 1
+    fi
     sleep 0.2
+    RCLONE_WAIT=$((RCLONE_WAIT + 1))
 done
 echo "S3 interno operativo."
 
