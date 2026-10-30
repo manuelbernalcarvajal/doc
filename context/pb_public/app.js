@@ -307,7 +307,6 @@ async function loadFiles() {
 
         filesData.items.forEach(file => {
             const tr = document.createElement("tr");
-            const fileUrl = `${CONFIG.API_URL}/api/files/files/${file.id}/${file.file}?token=${state.token}`;
             const fileNameLower = file.name.toLowerCase();
             const isOfficeDoc = OFFICE_EXTENSIONS.some(ext => fileNameLower.endsWith(ext));
 
@@ -324,14 +323,66 @@ async function loadFiles() {
                 <td>${formatDate(file.created)}</td>
                 <td class="text-right">
                     ${editBtn}
-                    <a href="${fileUrl}" target="_blank" download="${escapeHtml(file.name)}" class="btn btn-secondary btn-sm">⬇️</a>
+                    <button type="button" class="download-file-btn btn btn-secondary btn-sm"
+                        data-file-id="${escapeHtml(file.id)}"
+                        data-storage-name="${escapeHtml(file.file)}"
+                        data-file-name="${escapeHtml(file.name)}"
+                        title="Descargar">⬇️</button>
                     <button class="btn btn-secondary btn-sm" onclick="trashFile('${file.id}')">🗑️</button>
                 </td>
             `;
             tbody.appendChild(tr);
+
+            tr.querySelector(".download-file-btn").addEventListener("click", (event) => {
+                const button = event.currentTarget;
+                downloadFile(button.dataset.fileId, button.dataset.storageName, button.dataset.fileName);
+            });
         });
     } catch (err) {
         tbody.innerHTML = `<tr><td colspan="6" class="text-center alert-error">Error al cargar: ${err.message}</td></tr>`;
+    }
+}
+
+async function downloadFile(fileId, storageName, fileName) {
+    let writable;
+    try {
+        if ("showSaveFilePicker" in window) {
+            const fileHandle = await window.showSaveFilePicker({ suggestedName: fileName });
+            writable = await fileHandle.createWritable();
+        }
+
+        const res = await fetch(`${CONFIG.API_URL}/api/files/files/${fileId}/${encodeURIComponent(storageName)}`, {
+            headers: getHeaders(false)
+        });
+        if (!res.ok) throw new Error("No se pudo descargar el fichero.");
+
+        if (writable && res.body) {
+            const reader = res.body.getReader();
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    await writable.write(value);
+                }
+                await writable.close();
+            } catch (err) {
+                await writable.abort();
+                throw err;
+            }
+            return;
+        }
+
+        const blobUrl = URL.createObjectURL(await res.blob());
+        const link = document.createElement("a");
+        link.href = blobUrl;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
+    } catch (err) {
+        if (writable) await writable.abort().catch(() => {});
+        alert(err.message);
     }
 }
 

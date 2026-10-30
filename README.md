@@ -10,8 +10,10 @@ Al estar la imagen precompilada y publicada en GitHub Container Registry, **no n
 
 1. **Docker y Docker Compose** instalados en el servidor:
    ```bash
-   curl -fsSL https://get.docker.com | sh
+   sudo apt-get update
+   sudo apt-get install -y docker.io docker-compose-plugin
    ```
+   Para otras distribuciones, instala Docker siguiendo la documentación oficial de tu sistema operativo.
 2. **Un Bucket S3 vacío** creado en tu proveedor (Cloudflare R2, Backblaze B2, AWS S3, etc.) con el nombre que elijas (ej: `mi-nube-datos`).
 3. **Un Dominio o Subdominio** apuntando a la IP de tu servidor (para que Caddy genere el certificado SSL automático), o `localhost` si pruebas en tu máquina.
 
@@ -32,9 +34,10 @@ Crea el archivo `docker-compose.yml`:
 ```yaml
 services:
   monolith:
-    image: ghcr.io/manuelbernalcarvajal/doc:latest
+    image: ghcr.io/manuelbernalcarvajal/doc@${DOC_IMAGE_DIGEST:?Define DOC_IMAGE_DIGEST with a verified sha256 digest}
     container_name: monolith_app
     restart: unless-stopped
+    init: true
     ports:
       - "80:80"
       - "443:443"
@@ -56,6 +59,12 @@ services:
     #   - /pb_data:size=2G,mode=1777
 
     stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
 volumes:
   pb_data:
@@ -76,6 +85,8 @@ Crea tu archivo `.env` y rellena tus datos:
 # Dominio para HTTPS automático (o localhost para local)
 MY_DOMAIN=nube.tudominio.com
 INITIAL_ADMIN_PASSWORD=cambia_esta_clave_por_una_larga_y_unica
+# Digest SHA-256 verificado de la imagen publicada, por ejemplo:
+# DOC_IMAGE_DIGEST=sha256:...
 
 # === DATOS DE TU PROVEEDOR S3 EXTERNO ===
 # En Cloudflare R2: https://<account_id>.r2.cloudflarestorage.com

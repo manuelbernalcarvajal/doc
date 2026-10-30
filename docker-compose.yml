@@ -4,6 +4,7 @@ services:
       context: ./context
     container_name: nube_monolito
     restart: unless-stopped
+    init: true
     env_file:
       - .env
     ports:
@@ -16,6 +17,13 @@ services:
       - ./context/pb_public:/pb_public
       - caddy_data:/data
       - caddy_config:/config
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    stop_grace_period: 30s
 
 volumes:
   caddy_data:
