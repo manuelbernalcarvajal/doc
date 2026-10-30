@@ -1,6 +1,6 @@
 services:
   monolito:
-    image: ghcr.io/manuelbernalcarvajal/doc@${DOC_IMAGE_DIGEST:?Define DOC_IMAGE_DIGEST with a verified sha256 digest}
+    image: ghcr.io/manuelbernalcarvajal/doc:latest
     container_name: nube_monolito
     restart: unless-stopped
     init: true

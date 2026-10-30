@@ -73,13 +73,11 @@ routerAdd("POST", "/api/custom/upload-chunk", (c) => {
     const assembledPath = `${chunkDir}/${fileName}`;
 
     try {
-        // Cálculo del tamaño acumulado y lectura de fragmentos
+        // Calcula el tamaño sin cargar todos los fragmentos en memoria.
         let totalLength = 0;
-        const parts = [];
         for (let i = 0; i < totalChunks; i++) {
-            const partBytes = $os.readFile(`${chunkDir}/${i}.part`);
-            parts.push(partBytes);
-            totalLength += partBytes.length;
+            const partStat = $os.stat(`${chunkDir}/${i}.part`);
+            totalLength += partStat.size();
             if (totalLength > MAX_FILE_SIZE) {
                 throw new Error("El archivo supera el límite máximo de 10 GB.");
             }
@@ -104,15 +102,24 @@ routerAdd("POST", "/api/custom/upload-chunk", (c) => {
             }
         }
 
-        // Fusión contigua de memoria en un TypedArray binario
-        const mergedBuffer = new Uint8Array(totalLength);
-        let offset = 0;
-        for (let p of parts) {
-            mergedBuffer.set(p, offset);
-            offset += p.length;
+        // Ensambla en disco: solo un proceso cat y un fragmento pasan por cada iteración.
+        $os.writeFile(assembledPath, [], 420);
+        for (let i = 0; i < totalChunks; i++) {
+            const append = $os.cmd(
+                "sh",
+                "-c",
+                'cat "$1" >> "$2"',
+                "append-chunk",
+                `${chunkDir}/${i}.part`,
+                assembledPath
+            );
+            append.run();
         }
 
-        $os.writeFile(assembledPath, mergedBuffer, 420);
+        const assembledStat = $os.stat(assembledPath);
+        if (!assembledStat || assembledStat.size() !== totalLength) {
+            throw new Error("El archivo ensamblado no coincide con el tamaño esperado.");
+        }
 
         // 6. Creación del registro en PocketBase (despacho automático al S3 cifrado)
         const collection = $app.dao().findCollectionByNameOrId("files");
@@ -121,7 +128,19 @@ routerAdd("POST", "/api/custom/upload-chunk", (c) => {
         record.set("owner", authRecord.id);
         record.set("name", fileName);
         if (folderId) {
+            const folder = $app.dao().findRecordById("folders", folderId);
+            const folderIsGroup = folder.getBool("is_group");
+            const folderGroup = folder.getString("group");
+            const sameOwner = folder.getString("owner") === authRecord.id;
+            const sameGroup = folderIsGroup && folderGroup && folderGroup === authRecord.getString("user_group");
+            if (!sameOwner && !sameGroup && authRecord.getString("role") !== "admin") {
+                throw new Error("No tienes permiso para subir archivos en esta carpeta.");
+            }
             record.set("folder", folderId);
+            if (folderIsGroup && folderGroup) {
+                record.set("is_group", true);
+                record.set("group", folderGroup);
+            }
         }
         record.set("size", totalLength);
         record.set("trashed", false);

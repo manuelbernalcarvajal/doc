@@ -13,10 +13,8 @@ COPY --from=litestream_bin /usr/local/bin/litestream /usr/local/bin/litestream
 COPY --from=rclone_bin /usr/local/bin/rclone /usr/local/bin/rclone
 
 # 3. Descarga e instalación de PocketBase
-ARG PB_VERSION=0.22.20
-ARG PB_SHA256=f430bd045e0981ca6ecec91cea9bbaf10fcfcf541f48e984b1d7069940010635
-ADD https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/pocketbase_${PB_VERSION}_linux_amd64.zip /tmp/pb.zip
-RUN echo "${PB_SHA256}  /tmp/pb.zip" | sha256sum -c - \
+ADD https://github.com/pocketbase/pocketbase/releases/download/v0.22.20/pocketbase_0.22.20_linux_amd64.zip /tmp/pb.zip
+RUN echo "f430bd045e0981ca6ecec91cea9bbaf10fcfcf541f48e984b1d7069940010635  /tmp/pb.zip" | sha256sum -c - \
     && unzip /tmp/pb.zip -d /usr/local/bin/ \
     && rm /tmp/pb.zip \
     && chmod +x /usr/local/bin/pocketbase

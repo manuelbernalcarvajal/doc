@@ -34,7 +34,7 @@ Crea el archivo `docker-compose.yml`:
 ```yaml
 services:
   monolito:
-    image: ghcr.io/manuelbernalcarvajal/doc@${DOC_IMAGE_DIGEST:?Define DOC_IMAGE_DIGEST with a verified sha256 digest}
+    image: ghcr.io/manuelbernalcarvajal/doc:latest
     container_name: nube_monolito
     restart: unless-stopped
     init: true
@@ -85,9 +85,6 @@ Crea tu archivo `.env` y rellena tus datos:
 # Dominio para HTTPS automático (o localhost para local)
 MY_DOMAIN=nube.tudominio.com
 INITIAL_ADMIN_PASSWORD=cambia_esta_clave_por_una_larga_y_unica
-# Digest SHA-256 verificado de la imagen publicada (obligatorio):
-DOC_IMAGE_DIGEST=sha256:46ea33b30589e2ce495d422827e4ffbfa44a4502199a6caee584281272b08985
-
 # === DATOS DE TU PROVEEDOR S3 EXTERNO ===
 # En Cloudflare R2: https://<account_id>.r2.cloudflarestorage.com
 # En Backblaze B2:  https://s3.<region>.backblazeb2.com

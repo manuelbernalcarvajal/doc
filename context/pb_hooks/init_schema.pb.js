@@ -269,7 +269,37 @@ onAfterBootstrap((e) => {
         dao.saveCollection(contactsCol);
     }
 
-    // 8. Almacenamiento S3 interno cifrado
+    // 8. Bloqueos persistentes para edición concurrente
+    const lockIndex = "CREATE UNIQUE INDEX idx_resource_locks_resource ON resource_locks (resource_type, resource_id)";
+    if (!collectionExists("resource_locks")) {
+        const locksCol = new Collection();
+        locksCol.name = "resource_locks";
+        locksCol.type = "base";
+        locksCol.listRule = "";
+        locksCol.viewRule = "";
+        locksCol.createRule = "";
+        locksCol.updateRule = "";
+        locksCol.deleteRule = "";
+
+        locksCol.schema.addField(helperField("resource_type", "text", true, { min: 1, max: 40 }));
+        locksCol.schema.addField(helperField("resource_id", "text", true, { min: 1, max: 64 }));
+        locksCol.schema.addField(helperField("token", "text", true, { min: 1, max: 255 }));
+        locksCol.schema.addField(helperField("owner", "relation", true, {
+            collectionId: usersCol.id,
+            maxSelect: 1
+        }));
+        locksCol.schema.addField(helperField("expires_at", "date", true));
+        locksCol.indexes = [lockIndex];
+        dao.saveCollection(locksCol);
+    } else {
+        const locksCol = dao.findCollectionByNameOrId("resource_locks");
+        if (!locksCol.indexes.includes(lockIndex)) {
+            locksCol.indexes = [...locksCol.indexes, lockIndex];
+            dao.saveCollection(locksCol);
+        }
+    }
+
+    // 9. Almacenamiento S3 interno cifrado
     const settings = dao.findSettings();
     if (!settings.s3.enabled) {
         settings.s3.enabled = true;
@@ -283,7 +313,7 @@ onAfterBootstrap((e) => {
         console.log("[CONFIG] Almacenamiento S3 interno cifrado conectado.");
     }
 
-    // 9. Administrador inicial en caso de base de datos vacía
+    // 10. Administrador inicial en caso de base de datos vacía
     const totalUsers = dao.findRecordsByFilter("users", "1=1", "", 1, 0).length;
     if (totalUsers === 0) {
         const initialAdminPassword = $os.getenv("INITIAL_ADMIN_PASSWORD");
@@ -306,7 +336,7 @@ onAfterBootstrap((e) => {
 });
 
 /**
- * 10. Forzar clave temporal en nuevas cuentas
+ * 11. Forzar clave temporal en nuevas cuentas
  */
 onRecordBeforeCreateRequest((e) => {
     if (e.collection.name === "users") {

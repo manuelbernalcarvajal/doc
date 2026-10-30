@@ -14,6 +14,8 @@ const OFFICE_EXTENSIONS = [
     ".odt", ".ods", ".odp", ".rtf", ".txt", ".csv"
 ];
 
+let pendingMfaId = "";
+
 const state = {
     token: localStorage.getItem("pb_token") || "",
     user: JSON.parse(localStorage.getItem("pb_user") || "null"),
@@ -112,6 +114,7 @@ async function handleLogin(e) {
 
     const payload = { identity: identity, password: password };
     if (totpCode) payload.mfaCode = totpCode;
+    if (pendingMfaId) payload.mfaId = pendingMfaId;
 
     try {
         const res = await fetch(`${CONFIG.API_URL}/api/collections/users/auth-with-password`, {
@@ -123,6 +126,7 @@ async function handleLogin(e) {
         const data = await res.json();
 
         if (data.mfaId && !totpCode) {
+            pendingMfaId = data.mfaId;
             totpGroup.style.display = "block";
             errBox.textContent = "Introduce el código de 6 dígitos de tu aplicación TOTP.";
             errBox.style.display = "block";
@@ -132,6 +136,7 @@ async function handleLogin(e) {
         if (!res.ok) throw new Error(data.message || "Credenciales incorrectas.");
 
         setSession(data.token, data.record);
+        pendingMfaId = "";
 
         if (data.record.force_password_change) {
             modalForcePasswordChange();
@@ -187,6 +192,28 @@ function getHeaders(isJson = true) {
     const headers = { "Authorization": state.token };
     if (isJson) headers["Content-Type"] = "application/json";
     return headers;
+}
+
+async function withResourceLock(resourceType, resourceId, operation) {
+    const lockRes = await fetch(`${CONFIG.API_URL}/api/custom/locks/acquire`, {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify({ resourceType, resourceId })
+    });
+    const lockData = await lockRes.json().catch(() => ({}));
+    if (!lockRes.ok) {
+        throw new Error(lockData.error || "El recurso está siendo editado por otro usuario.");
+    }
+
+    try {
+        return await operation(lockData.token);
+    } finally {
+        await fetch(`${CONFIG.API_URL}/api/custom/locks/release`, {
+            method: "POST",
+            headers: getHeaders(),
+            body: JSON.stringify({ resourceType, resourceId, token: lockData.token })
+        });
+    }
 }
 
 // ==========================================
@@ -447,22 +474,37 @@ function renderBreadcrumbs() {
 
 async function trashFile(fileId) {
     if (!confirm("¿Mover este archivo a la papelera?")) return;
-    await fetch(`${CONFIG.API_URL}/api/collections/files/records/${fileId}`, {
-        method: "PATCH",
-        headers: getHeaders(),
-        body: JSON.stringify({ trashed: true, trashed_at: new Date().toISOString() })
-    });
-    loadFiles();
-    loadQuota();
+    try {
+        await withResourceLock("files", fileId, async (lockToken) => {
+            const headers = { ...getHeaders(), "X-Resource-Lock": lockToken };
+            const res = await fetch(`${CONFIG.API_URL}/api/collections/files/records/${fileId}`, {
+                method: "PATCH",
+                headers,
+                body: JSON.stringify({ trashed: true, trashed_at: new Date().toISOString() })
+            });
+            if (!res.ok) throw new Error("No se pudo mover el archivo a la papelera.");
+        });
+        loadFiles();
+        loadQuota();
+    } catch (err) {
+        alert(err.message);
+    }
 }
 
 async function deleteFolder(folderId) {
     if (!confirm("¿Eliminar esta carpeta?")) return;
-    await fetch(`${CONFIG.API_URL}/api/collections/folders/records/${folderId}`, {
-        method: "DELETE",
-        headers: getHeaders()
-    });
-    loadFiles();
+    try {
+        await withResourceLock("folders", folderId, async (lockToken) => {
+            const res = await fetch(`${CONFIG.API_URL}/api/collections/folders/records/${folderId}`, {
+                method: "DELETE",
+                headers: { ...getHeaders(), "X-Resource-Lock": lockToken }
+            });
+            if (!res.ok) throw new Error("No se pudo eliminar la carpeta.");
+        });
+        loadFiles();
+    } catch (err) {
+        alert(err.message);
+    }
 }
 
 // ==========================================
@@ -593,11 +635,47 @@ function renderCalendar() {
 
 async function deleteCalendarEvent(id) {
     if (!confirm("¿Eliminar este evento?")) return;
-    await fetch(`${CONFIG.API_URL}/api/collections/calendar_events/records/${id}`, {
-        method: "DELETE",
-        headers: getHeaders()
-    });
-    loadCalendar();
+    let lockToken = "";
+    try {
+        const lockRes = await fetch(`${CONFIG.API_URL}/api/custom/locks/acquire`, {
+            method: "POST",
+            headers: getHeaders(),
+            body: JSON.stringify({
+                resourceType: "calendar_events",
+                resourceId: id
+            })
+        });
+        const lockData = await lockRes.json();
+        if (!lockRes.ok) throw new Error(lockData.error || "El evento está siendo editado por otro usuario.");
+        lockToken = lockData.token;
+
+        const deleteRes = await fetch(`${CONFIG.API_URL}/api/collections/calendar_events/records/${id}`, {
+            method: "DELETE",
+            headers: {
+                ...getHeaders(),
+                "X-Resource-Lock": lockToken
+            }
+        });
+        if (!deleteRes.ok) {
+            const error = await deleteRes.json().catch(() => ({}));
+            throw new Error(error.message || error.error || "No se pudo eliminar el evento.");
+        }
+        loadCalendar();
+    } catch (err) {
+        alert(err.message);
+    } finally {
+        if (lockToken) {
+            await fetch(`${CONFIG.API_URL}/api/custom/locks/release`, {
+                method: "POST",
+                headers: getHeaders(),
+                body: JSON.stringify({
+                    resourceType: "calendar_events",
+                    resourceId: id,
+                    token: lockToken
+                })
+            });
+        }
+    }
 }
 
 // ==========================================
@@ -652,11 +730,18 @@ function renderContacts(query = "") {
 
 async function deleteContact(id) {
     if (!confirm("¿Eliminar este contacto?")) return;
-    await fetch(`${CONFIG.API_URL}/api/collections/contacts/records/${id}`, {
-        method: "DELETE",
-        headers: getHeaders()
-    });
-    loadContacts();
+    try {
+        await withResourceLock("contacts", id, async (lockToken) => {
+            const res = await fetch(`${CONFIG.API_URL}/api/collections/contacts/records/${id}`, {
+                method: "DELETE",
+                headers: { ...getHeaders(), "X-Resource-Lock": lockToken }
+            });
+            if (!res.ok) throw new Error("No se pudo eliminar el contacto.");
+        });
+        loadContacts();
+    } catch (err) {
+        alert(err.message);
+    }
 }
 
 // ==========================================
@@ -1170,8 +1255,9 @@ async function loadQuota() {
         const data = await res.json();
         const totalUsed = data.items.reduce((acc, f) => acc + (f.size || 0), 0);
 
-        const quota = state.user.storage_quota || 10737418240;
-        document.getElementById("storage-quota-display").textContent = `${formatMB(totalUsed)} MB / ${formatMB(quota)} MB`;
+        const quota = state.user.storage_quota || 0;
+        const quotaLabel = quota > 0 ? `${formatMB(quota)} MB` : "Ilimitada";
+        document.getElementById("storage-quota-display").textContent = `${formatMB(totalUsed)} MB / ${quotaLabel}`;
     } catch (_) {}
 }
 
