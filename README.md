@@ -33,9 +33,9 @@ Crea el archivo `docker-compose.yml`:
 
 ```yaml
 services:
-  monolith:
+  monolito:
     image: ghcr.io/manuelbernalcarvajal/doc@${DOC_IMAGE_DIGEST:?Define DOC_IMAGE_DIGEST with a verified sha256 digest}
-    container_name: monolith_app
+    container_name: nube_monolito
     restart: unless-stopped
     init: true
     ports:
@@ -85,13 +85,14 @@ Crea tu archivo `.env` y rellena tus datos:
 # Dominio para HTTPS automático (o localhost para local)
 MY_DOMAIN=nube.tudominio.com
 INITIAL_ADMIN_PASSWORD=cambia_esta_clave_por_una_larga_y_unica
-# Digest SHA-256 verificado de la imagen publicada, por ejemplo:
-# DOC_IMAGE_DIGEST=sha256:...
+# Digest SHA-256 verificado de la imagen publicada (obligatorio):
+DOC_IMAGE_DIGEST=sha256:46ea33b30589e2ce495d422827e4ffbfa44a4502199a6caee584281272b08985
 
 # === DATOS DE TU PROVEEDOR S3 EXTERNO ===
 # En Cloudflare R2: https://<account_id>.r2.cloudflarestorage.com
 # En Backblaze B2:  https://s3.<region>.backblazeb2.com
 # En AWS S3:         https://s3.<region>.amazonaws.com
+EXTERNAL_S3_PROVIDER=Other
 EXTERNAL_S3_ENDPOINT=https://tu-cuenta.r2.cloudflarestorage.com
 EXTERNAL_S3_REGION=auto
 EXTERNAL_S3_BUCKET=mi-nube-datos
@@ -103,11 +104,6 @@ EXTERNAL_S3_SECRET_ACCESS_KEY=tu_secret_key
 CRYPT_PASSWORD=tu_clave_openssl_1
 CRYPT_PASSWORD2=tu_clave_openssl_2
 
-# === PARÁMETROS INTERNOS (NO TOCAR) ===
-INTERNAL_S3_ENDPOINT=http://127.0.0.1:9000
-INTERNAL_S3_BUCKET=monolith-data
-INTERNAL_S3_ACCESS_KEY=monolith_internal
-INTERNAL_S3_SECRET_KEY=monolith_internal_secret_98765
 ```
 
 ---
