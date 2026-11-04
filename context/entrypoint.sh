@@ -36,10 +36,11 @@ else
 fi
 
 # `serve s3` expone como buckets los directorios que existen en la raíz
-# servida. El bucket interno debe ser un directorio del bucket externo,
-# no la raíz que se pasa al servidor.
-if ! rclone --config /tmp/rclone.conf mkdir --retries 1 \
-    "crypt_remote:monolith-data"; then
+# servida. Un `mkdir` sobre un remoto S3 puede interpretarse como
+# CreateBucket, por lo que usamos un objeto marcador para crear la ruta
+# lógica sin exigir ese permiso a las credenciales externas.
+if ! rclone --config /tmp/rclone.conf touch --retries 1 \
+    "crypt_remote:monolith-data/.rclone_keep"; then
     echo "No se pudo preparar el bucket interno cifrado monolith-data." >&2
     exit 1
 fi
