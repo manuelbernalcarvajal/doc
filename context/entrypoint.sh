@@ -35,8 +35,17 @@ else
     exit 1
 fi
 
+# `serve s3` expone como buckets los directorios que existen en la raíz
+# servida. El bucket interno debe ser un directorio del bucket externo,
+# no la raíz que se pasa al servidor.
+if ! rclone --config /tmp/rclone.conf mkdir --retries 1 \
+    "crypt_remote:monolith-data"; then
+    echo "No se pudo preparar el bucket interno cifrado monolith-data." >&2
+    exit 1
+fi
+
 echo "[2/4] Arrancando rclone serve s3 temporal para tareas previas..."
-rclone --config /tmp/rclone.conf serve s3 crypt_remote:monolith-data \
+rclone --config /tmp/rclone.conf serve s3 crypt_remote: \
     --addr 127.0.0.1:9000 \
     --auth-key "monolith_internal,monolith_internal_secret_98765" \
     --vfs-cache-mode off \

@@ -152,4 +152,4 @@ Si tu servidor físico se quema, desaparece o borras la máquina:
    ```bash
    docker compose up -d
    ```
-5. **Fin.** Litestream y Rclone detectan que el disco local está limpio, descargan la base de datos y conectan los archivos binarios del S3 cifrado en menos de 10 segundos.
+5. **Fin.** Litestream y Rclone detectan que el disco local está limpio, descargan la base de datos y conectan los archivos binarios del S3 cifrado en menos de 10 segundos. El bucket externo se usa como almacenamiento raíz y `monolith-data` se expone como bucket interno del gateway; no es necesario crear ese bucket interno en el proveedor.
