@@ -22,6 +22,13 @@ directory_name_encryption = true
 EOF
 chmod 600 /tmp/rclone.conf
 
+echo "Asegurando que el bucket S3 externo esté disponible..."
+if ! rclone --config /tmp/rclone.conf mkdir "raw_s3:${EXTERNAL_S3_BUCKET}"; then
+    echo "No se pudo crear o comprobar el bucket S3 externo (${EXTERNAL_S3_BUCKET})." >&2
+    echo "Comprueba el endpoint, las credenciales y los permisos para crear buckets." >&2
+    exit 1
+fi
+
 echo "[2/4] Arrancando rclone serve s3 temporal para tareas previas..."
 rclone --config /tmp/rclone.conf serve s3 crypt_remote:monolith-data \
     --addr 127.0.0.1:9000 \
