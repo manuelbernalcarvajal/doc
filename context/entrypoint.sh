@@ -23,9 +23,15 @@ EOF
 chmod 600 /tmp/rclone.conf
 
 echo "Asegurando que el bucket S3 externo esté disponible..."
-if ! rclone --config /tmp/rclone.conf mkdir "raw_s3:${EXTERNAL_S3_BUCKET}"; then
-    echo "No se pudo crear o comprobar el bucket S3 externo (${EXTERNAL_S3_BUCKET})." >&2
-    echo "Comprueba el endpoint, las credenciales y los permisos para crear buckets." >&2
+if rclone --config /tmp/rclone.conf lsf --max-depth 1 --retries 1 \
+    "raw_s3:${EXTERNAL_S3_BUCKET}" >/dev/null 2>&1; then
+    echo "Bucket S3 externo encontrado."
+elif rclone --config /tmp/rclone.conf mkdir --retries 1 \
+    "raw_s3:${EXTERNAL_S3_BUCKET}"; then
+    echo "Bucket S3 externo creado."
+else
+    echo "El bucket S3 externo (${EXTERNAL_S3_BUCKET}) no existe o no es accesible." >&2
+    echo "Créalo en el proveedor S3 o concede permiso CreateBucket a estas credenciales." >&2
     exit 1
 fi
 
