@@ -14,7 +14,7 @@ Al estar la imagen precompilada y publicada en GitHub Container Registry, **no n
    sudo apt-get install -y docker.io docker-compose-plugin
    ```
    Para otras distribuciones, instala Docker siguiendo la documentación oficial de tu sistema operativo.
-2. **Un Bucket S3 vacío** creado en tu proveedor (Cloudflare R2, Backblaze B2, AWS S3, etc.) con el nombre que elijas (ej: `mi-nube-datos`).
+2. **Un Bucket S3** en tu proveedor (Cloudflare R2, Backblaze B2, AWS S3, etc.) con el nombre que elijas (ej: `mi-nube-datos`). La cuenta debe poder crearlo si todavía no existe; el contenedor lo inicializa automáticamente.
 3. **Un Dominio o Subdominio** apuntando a la IP de tu servidor (para que Caddy genere el certificado SSL automático), o `localhost` si pruebas en tu máquina.
 
 ---
