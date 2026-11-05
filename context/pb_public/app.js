@@ -24,6 +24,8 @@ const state = {
     folderPath: [],
     contactsCache: [],
     calendarEventsCache: [],
+    calendarView: "list",
+    calendarMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
     settingsRecordId: null,
     wopiEnabled: false
 };
@@ -54,6 +56,23 @@ function initEventListeners() {
 
     document.getElementById("contact-search").addEventListener("input", (e) => {
         renderContacts(e.target.value.toLowerCase());
+    });
+
+    document.getElementById("calendar-list-view").addEventListener("click", () => {
+        state.calendarView = "list";
+        renderCalendar();
+    });
+    document.getElementById("calendar-month-view").addEventListener("click", () => {
+        state.calendarView = "month";
+        renderCalendar();
+    });
+    document.getElementById("calendar-previous-month").addEventListener("click", () => {
+        state.calendarMonth = new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth() - 1, 1);
+        renderCalendar();
+    });
+    document.getElementById("calendar-next-month").addEventListener("click", () => {
+        state.calendarMonth = new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth() + 1, 1);
+        renderCalendar();
     });
 
     // Administración
@@ -296,12 +315,12 @@ async function loadFiles() {
         const fileFilter = state.currentFolder ? `folder = '${state.currentFolder}' && trashed = false` : "folder = '' && trashed = false";
 
         const [foldersRes, filesRes] = await Promise.all([
-            fetch(`${CONFIG.API_URL}/api/collections/folders/records?filter=(${folderFilter})&sort=name`, { headers: getHeaders() }),
-            fetch(`${CONFIG.API_URL}/api/collections/files/records?filter=(${fileFilter})&sort=-created`, { headers: getHeaders() })
+            fetch(`${CONFIG.API_URL}/api/collections/folders/records?filter=${encodeURIComponent(`(${folderFilter})`)}&sort=name`, { headers: getHeaders() }),
+            fetch(`${CONFIG.API_URL}/api/collections/files/records?filter=${encodeURIComponent(`(${fileFilter})`)}&sort=-created`, { headers: getHeaders() })
         ]);
 
-        const foldersData = await foldersRes.json();
-        const filesData = await filesRes.json();
+        const foldersData = await getCollectionData(foldersRes, "las carpetas");
+        const filesData = await getCollectionData(filesRes, "los archivos");
 
         tbody.innerHTML = "";
 
@@ -538,6 +557,11 @@ async function uploadFileInChunks(file) {
 
     const uploadId = "upl_" + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
     const totalChunks = Math.ceil(file.size / CONFIG.CHUNK_SIZE);
+    if (totalChunks < 1) {
+        modal.style.display = "none";
+        alert("No se puede subir un archivo vacío.");
+        return;
+    }
     let bytesUploaded = 0;
 
     for (let i = 0; i < totalChunks; i++) {
@@ -551,21 +575,45 @@ async function uploadFileInChunks(file) {
         formData.append("totalChunks", totalChunks.toString());
         formData.append("fileName", file.name);
         formData.append("folderId", state.currentFolder);
-        formData.append("chunk", chunkBlob);
+        formData.append("chunk", chunkBlob, file.name);
 
         subtextEl.textContent = `Enviando fragmento ${i + 1} de ${totalChunks}...`;
 
         try {
-            const res = await fetch(`${CONFIG.API_URL}/api/custom/upload-chunk`, {
-                method: "POST",
-                headers: { "Authorization": state.token },
-                body: formData
-            });
+            let res;
+            let lastError;
+            for (let attempt = 1; attempt <= 3; attempt += 1) {
+                try {
+                    res = await fetch(`${CONFIG.API_URL}/api/custom/upload-chunk`, {
+                        method: "POST",
+                        headers: { "Authorization": state.token },
+                        body: formData
+                    });
+                    if (res.ok) break;
 
-            if (!res.ok) {
-                const errData = await res.json();
-                throw new Error(errData.error || "Error en el fragmento.");
+                    const responseText = await res.text();
+                    let errData = {};
+                    try {
+                        errData = responseText ? JSON.parse(responseText) : {};
+                    } catch (_) {
+                        errData = {};
+                    }
+                    lastError = new Error(
+                        errData.error ||
+                        errData.message ||
+                        responseText ||
+                        `Error HTTP ${res.status} al enviar el fragmento.`
+                    );
+                } catch (err) {
+                    lastError = err;
+                }
+
+                if (attempt < 3) {
+                    subtextEl.textContent = `Reintentando fragmento ${i + 1}...`;
+                    await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+                }
             }
+            if (!res || !res.ok) throw lastError || new Error("Error en el fragmento.");
 
             bytesUploaded += chunkBlob.size;
             const percentage = ((bytesUploaded / file.size) * 100).toFixed(1);
@@ -600,7 +648,7 @@ async function loadCalendar() {
         const res = await fetch(`${CONFIG.API_URL}/api/collections/calendar_events/records?sort=start_time`, {
             headers: getHeaders()
         });
-        const data = await res.json();
+        const data = await getCollectionData(res, "los eventos");
         state.calendarEventsCache = data.items;
         renderCalendar();
     } catch (err) {
@@ -609,11 +657,28 @@ async function loadCalendar() {
 }
 
 function renderCalendar() {
-    const container = document.getElementById("calendar-events-list");
-    container.innerHTML = "";
+    const listContainer = document.getElementById("calendar-events-list");
+    const monthGrid = document.getElementById("calendar-month-grid");
+    const monthNavigation = document.getElementById("calendar-month-navigation");
+    const listButton = document.getElementById("calendar-list-view");
+    const monthButton = document.getElementById("calendar-month-view");
 
+    listContainer.style.display = state.calendarView === "list" ? "grid" : "none";
+    monthGrid.style.display = state.calendarView === "month" ? "grid" : "none";
+    monthNavigation.style.display = state.calendarView === "month" ? "flex" : "none";
+    listButton.classList.toggle("btn-primary", state.calendarView === "list");
+    listButton.classList.toggle("btn-secondary", state.calendarView !== "list");
+    monthButton.classList.toggle("btn-primary", state.calendarView === "month");
+    monthButton.classList.toggle("btn-secondary", state.calendarView !== "month");
+
+    if (state.calendarView === "month") {
+        renderCalendarMonth(monthGrid);
+        return;
+    }
+
+    listContainer.innerHTML = "";
     if (state.calendarEventsCache.length === 0) {
-        container.innerHTML = "<p>No hay eventos registrados.</p>";
+        listContainer.innerHTML = "<p>No hay eventos registrados.</p>";
         return;
     }
 
@@ -629,8 +694,50 @@ function renderCalendar() {
                 <button class="btn btn-secondary btn-sm" onclick="deleteCalendarEvent('${evt.id}')">Eliminar</button>
             </div>
         `;
-        container.appendChild(card);
+        listContainer.appendChild(card);
     });
+}
+
+function renderCalendarMonth(container) {
+    const year = state.calendarMonth.getFullYear();
+    const month = state.calendarMonth.getMonth();
+    const monthLabel = state.calendarMonth.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+    document.getElementById("calendar-month-label").textContent =
+        monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
+
+    const firstDay = new Date(year, month, 1);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const startOffset = (firstDay.getDay() + 6) % 7;
+    const weekdayLabels = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+    container.innerHTML = weekdayLabels.map(day => `<div class="calendar-weekday">${day}</div>`).join("");
+
+    for (let index = 0; index < startOffset + daysInMonth; index += 1) {
+        const dayNumber = index - startOffset + 1;
+        const cell = document.createElement("div");
+        cell.className = "calendar-day";
+        if (dayNumber < 1) {
+            cell.classList.add("calendar-day-muted");
+            container.appendChild(cell);
+            continue;
+        }
+
+        const dayDate = new Date(year, month, dayNumber);
+        const dayEvents = state.calendarEventsCache.filter(evt => {
+            const start = new Date(evt.start_time);
+            const end = new Date(evt.end_time || evt.start_time);
+            return dayDate <= end && new Date(year, month, dayNumber + 1) > start;
+        });
+
+        cell.innerHTML = `<div class="calendar-day-number">${dayNumber}</div>`;
+        dayEvents.forEach(evt => {
+            const event = document.createElement("div");
+            event.className = "calendar-day-event";
+            event.title = `${evt.title} · ${formatDateTime(evt.start_time)}`;
+            event.textContent = evt.title;
+            cell.appendChild(event);
+        });
+        container.appendChild(cell);
+    }
 }
 
 async function deleteCalendarEvent(id) {
@@ -1282,6 +1389,17 @@ function formatDateTime(isoStr) {
     if (!isoStr) return "—";
     const d = new Date(isoStr);
     return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+async function getCollectionData(response, resourceName) {
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data.message || data.error || `No se pudieron cargar ${resourceName}.`);
+    }
+    if (!data || !Array.isArray(data.items)) {
+        throw new Error(`La respuesta de ${resourceName} no tiene un formato válido.`);
+    }
+    return data;
 }
 
 function escapeHtml(str) {
