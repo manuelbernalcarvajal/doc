@@ -107,9 +107,21 @@
 
             <!-- Sección: Calendario -->
             <section id="view-calendar" class="view-pane">
+                <div class="calendar-toolbar">
+                    <div class="calendar-view-switcher" role="group" aria-label="Vista del calendario">
+                        <button type="button" id="calendar-list-view" class="btn btn-secondary btn-sm">Lista</button>
+                        <button type="button" id="calendar-month-view" class="btn btn-secondary btn-sm">Mes</button>
+                    </div>
+                    <div id="calendar-month-navigation" class="calendar-month-navigation" style="display: none;">
+                        <button type="button" id="calendar-previous-month" class="btn btn-secondary btn-sm" aria-label="Mes anterior">‹</button>
+                        <strong id="calendar-month-label"></strong>
+                        <button type="button" id="calendar-next-month" class="btn btn-secondary btn-sm" aria-label="Mes siguiente">›</button>
+                    </div>
+                </div>
                 <div class="cards-grid" id="calendar-events-list">
                     <!-- Eventos renderizados aquí -->
                 </div>
+                <div id="calendar-month-grid" class="calendar-month-grid" style="display: none;"></div>
             </section>
 
             <!-- Sección: Contactos -->

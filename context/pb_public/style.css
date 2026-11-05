@@ -420,6 +420,80 @@ body {
     gap: 1rem;
 }
 
+.calendar-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.calendar-view-switcher,
+.calendar-month-navigation {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.calendar-month-navigation {
+    color: var(--text-main);
+}
+
+.calendar-month-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+
+.calendar-weekday {
+    background: var(--bg-subtle);
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 0.625rem;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+}
+
+.calendar-day {
+    min-height: 7rem;
+    padding: 0.5rem;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+}
+
+.calendar-day:nth-child(7n) {
+    border-right: none;
+}
+
+.calendar-day-muted {
+    background: var(--bg-subtle);
+}
+
+.calendar-day-number {
+    color: var(--text-muted);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    margin-bottom: 0.35rem;
+}
+
+.calendar-day-event {
+    background: var(--accent);
+    color: var(--text-white);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    margin-bottom: 0.25rem;
+    overflow: hidden;
+    padding: 0.2rem 0.35rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .card-item {
     background: var(--bg-surface);
     border: 1px solid var(--border);
@@ -579,4 +653,21 @@ body {
     color: var(--text-muted);
     margin-top: 0.25rem;
     text-align: right;
+}
+
+@media (max-width: 640px) {
+    .calendar-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .calendar-day {
+        min-height: 5rem;
+        padding: 0.35rem;
+    }
+
+    .calendar-weekday {
+        font-size: 0.6875rem;
+        padding: 0.45rem 0.2rem;
+    }
 }
