@@ -14,7 +14,7 @@ Al estar la imagen precompilada y publicada en GitHub Container Registry, **no n
    sudo apt-get install -y docker.io docker-compose-plugin
    ```
    Para otras distribuciones, instala Docker siguiendo la documentación oficial de tu sistema operativo.
-2. **Un Bucket S3** en tu proveedor (Cloudflare R2, Backblaze B2, AWS S3, etc.) con el nombre que elijas (ej: `mi-nube-datos`). Si las credenciales no tienen permiso para crear buckets, créalo previamente; el contenedor lo comprobará y sólo intentará crearlo cuando no exista.
+2. **Un Bucket S3** en tu proveedor (Cloudflare R2, Backblaze B2, AWS S3, etc.) con el nombre que elijas (ej: `mi-nube-datos`). La instalación comprueba el bucket y lo crea sólo si las credenciales tienen permiso; el almacenamiento interno `monolith-data` es una ruta virtual cifrada y no se crea como bucket adicional.
 3. **Un Dominio o Subdominio** apuntando a la IP de tu servidor (para que Caddy genere el certificado SSL automático), o `localhost` si pruebas en tu máquina.
 
 ---
@@ -152,4 +152,4 @@ Si tu servidor físico se quema, desaparece o borras la máquina:
    ```bash
    docker compose up -d
    ```
-5. **Fin.** Litestream y Rclone detectan que el disco local está limpio, descargan la base de datos y conectan los archivos binarios del S3 cifrado en menos de 10 segundos. El bucket externo se usa como almacenamiento raíz y `monolith-data` se expone como bucket interno virtual del gateway; no es necesario crear ese bucket interno en el proveedor ni conceder `CreateBucket` para él.
+5. **Fin.** Litestream y Rclone detectan que el disco local está limpio, descargan la base de datos y conectan los archivos binarios del S3 cifrado. El bucket externo se usa como almacenamiento raíz y `monolith-data` se expone como bucket interno virtual del gateway; no es necesario crear ese bucket interno en el proveedor ni conceder `CreateBucket` para él.
