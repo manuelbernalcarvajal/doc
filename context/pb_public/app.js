@@ -27,7 +27,11 @@ const state = {
     calendarView: "list",
     calendarMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
     settingsRecordId: null,
-    wopiEnabled: false
+    wopiEnabled: false,
+    uploadQueue: [],
+    uploadInProgress: false,
+    preferences: { folder_sort: "name", folder_direction: "asc", file_sort: "updated", file_direction: "desc", folders_first: true },
+    pdf: { fileId: "", loadingTask: null, document: null, page: 1, scale: 1.15, annotations: [], highlightMode: false, rendering: false, renderQueued: false, openId: 0 }
 };
 
 // ==========================================
@@ -99,6 +103,44 @@ function initEventListeners() {
 
     document.getElementById("modal-close").addEventListener("click", closeModal);
     document.getElementById("btn-close-wopi").addEventListener("click", closeWopiEditor);
+    document.getElementById("trash-refresh").addEventListener("click", loadTrash);
+    document.getElementById("files-sort-field").addEventListener("change", saveSortPreferences);
+    document.getElementById("files-sort-direction").addEventListener("click", toggleSortDirection);
+    document.getElementById("folders-first").addEventListener("change", saveSortPreferences);
+    document.getElementById("pdf-close").addEventListener("click", closePdfViewer);
+    document.getElementById("pdf-previous").addEventListener("click", () => changePdfPage(-1));
+    document.getElementById("pdf-next").addEventListener("click", () => changePdfPage(1));
+    document.getElementById("pdf-zoom-out").addEventListener("click", () => changePdfZoom(-0.15));
+    document.getElementById("pdf-zoom-in").addEventListener("click", () => changePdfZoom(0.15));
+    document.getElementById("pdf-highlight-toggle").addEventListener("click", togglePdfHighlightMode);
+    document.getElementById("pdf-save-comment").addEventListener("click", savePdfComment);
+    document.getElementById("pdf-annotation-layer").addEventListener("pointerdown", beginPdfHighlight);
+    document.getElementById("pdf-annotation-layer").addEventListener("pointerup", finishPdfHighlight);
+
+    const fileDropzone = document.getElementById("file-dropzone");
+    const filePicker = document.getElementById("file-picker");
+    if (fileDropzone && filePicker) {
+        fileDropzone.addEventListener("click", () => filePicker.click());
+        fileDropzone.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                filePicker.click();
+            }
+        });
+        filePicker.addEventListener("change", () => {
+            queueFiles(filePicker.files);
+            filePicker.value = "";
+        });
+        ["dragenter", "dragover"].forEach(type => fileDropzone.addEventListener(type, (event) => {
+            event.preventDefault();
+            fileDropzone.classList.add("is-dragging");
+        }));
+        ["dragleave", "drop"].forEach(type => fileDropzone.addEventListener(type, (event) => {
+            event.preventDefault();
+            fileDropzone.classList.remove("is-dragging");
+        }));
+        fileDropzone.addEventListener("drop", (event) => queueFiles(event.dataTransfer.files));
+    }
 }
 
 async function verifySession() {
@@ -188,7 +230,7 @@ function showAuth() {
     document.getElementById("app-container").style.display = "none";
 }
 
-function showDashboard() {
+async function showDashboard() {
     document.getElementById("auth-container").style.display = "none";
     document.getElementById("app-container").style.display = "flex";
 
@@ -203,6 +245,7 @@ function showDashboard() {
         document.getElementById("nav-admin").style.display = "none";
     }
 
+    await loadPreferences();
     switchView("files");
     loadQuota();
 }
@@ -211,6 +254,63 @@ function getHeaders(isJson = true) {
     const headers = { "Authorization": state.token };
     if (isJson) headers["Content-Type"] = "application/json";
     return headers;
+}
+
+async function loadPreferences() {
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/collections/user_preferences/records?filter=${encodeURIComponent(`owner='${state.user.id}'`)}&perPage=1`, { headers: getHeaders() });
+        const data = await res.json();
+        if (data.items?.[0]) state.preferences = { ...state.preferences, ...data.items[0] };
+    } catch (_) {}
+    document.getElementById("files-sort-field").value = state.preferences.file_sort;
+    document.getElementById("folders-first").checked = state.preferences.folders_first !== false;
+    updateSortDirectionLabel();
+}
+
+async function saveSortPreferences() {
+    const field = document.getElementById("files-sort-field").value;
+    state.preferences.file_sort = field;
+    state.preferences.folders_first = document.getElementById("folders-first").checked;
+    const payload = {
+        owner: state.user.id,
+        folder_sort: state.preferences.folder_sort,
+        folder_direction: state.preferences.folder_direction,
+        file_sort: state.preferences.file_sort,
+        file_direction: state.preferences.file_direction,
+        folders_first: state.preferences.folders_first
+    };
+    try {
+        const existing = await fetch(`${CONFIG.API_URL}/api/collections/user_preferences/records?filter=${encodeURIComponent(`owner='${state.user.id}'`)}&perPage=1`, { headers: getHeaders() });
+        const existingData = await existing.json();
+        const id = existingData.items?.[0]?.id;
+        await fetch(`${CONFIG.API_URL}/api/collections/user_preferences/records${id ? `/${id}` : ""}`, {
+            method: id ? "PATCH" : "POST", headers: getHeaders(), body: JSON.stringify(payload)
+        });
+        loadFiles();
+    } catch (err) {
+        alert(`No se pudieron guardar las preferencias: ${err.message}`);
+    }
+}
+
+function toggleSortDirection() {
+    state.preferences.file_direction = state.preferences.file_direction === "asc" ? "desc" : "asc";
+    updateSortDirectionLabel();
+    saveSortPreferences();
+}
+
+function updateSortDirectionLabel() {
+    const label = document.getElementById("files-sort-direction");
+    if (label) label.textContent = state.preferences.file_direction === "asc" ? "A → Z" : "Z → A";
+}
+
+async function recordActivity(resourceType, resourceId, action, details = "") {
+    try {
+        await fetch(`${CONFIG.API_URL}/api/custom/file-activity`, {
+            method: "POST",
+            headers: getHeaders(),
+            body: JSON.stringify({ resourceType, resourceId, action, details })
+        });
+    } catch (_) {}
 }
 
 async function withResourceLock(resourceType, resourceId, operation) {
@@ -255,6 +355,7 @@ function switchView(viewName) {
 
     const titles = {
         files: "Archivos",
+        trash: "Papelera",
         calendar: "Calendario",
         contacts: "Contactos",
         admin: "Administración"
@@ -264,6 +365,7 @@ function switchView(viewName) {
     renderTopbarActions(viewName);
 
     if (viewName === "files") loadFiles();
+    if (viewName === "trash") loadTrash();
     if (viewName === "calendar") loadCalendar();
     if (viewName === "contacts") loadContacts();
     if (viewName === "admin") loadAdminData();
@@ -311,12 +413,14 @@ async function loadFiles() {
     tbody.innerHTML = `<tr><td colspan="6" class="text-center">Cargando elementos...</td></tr>`;
 
     try {
-        const folderFilter = state.currentFolder ? `parent = '${state.currentFolder}'` : "parent = ''";
-        const fileFilter = state.currentFolder ? `folder = '${state.currentFolder}' && trashed = false` : "folder = '' && trashed = false";
+        const folderFilter = state.currentFolder ? `parent = '${state.currentFolder}' && (trashed = false || trashed = null)` : "parent = '' && (trashed = false || trashed = null)";
+        const fileFilter = state.currentFolder ? `folder = '${state.currentFolder}' && (trashed = false || trashed = null)` : "folder = '' && (trashed = false || trashed = null)";
+        const folderSort = `${state.preferences.folder_direction === "desc" ? "-" : ""}${state.preferences.folder_sort}`;
+        const fileSort = `${state.preferences.file_direction === "desc" ? "-" : ""}${state.preferences.file_sort}`;
 
         const [foldersRes, filesRes] = await Promise.all([
-            fetch(`${CONFIG.API_URL}/api/collections/folders/records?filter=${encodeURIComponent(`(${folderFilter})`)}&sort=name`, { headers: getHeaders() }),
-            fetch(`${CONFIG.API_URL}/api/collections/files/records?filter=${encodeURIComponent(`(${fileFilter})`)}&sort=-created`, { headers: getHeaders() })
+            fetch(`${CONFIG.API_URL}/api/collections/folders/records?filter=${encodeURIComponent(`(${folderFilter})`)}&sort=${folderSort}`, { headers: getHeaders() }),
+            fetch(`${CONFIG.API_URL}/api/collections/files/records?filter=${encodeURIComponent(`(${fileFilter})`)}&sort=${fileSort}`, { headers: getHeaders() })
         ]);
 
         const foldersData = await getCollectionData(foldersRes, "las carpetas");
@@ -331,6 +435,7 @@ async function loadFiles() {
 
         foldersData.items.forEach(folder => {
             const tr = document.createElement("tr");
+            tr.className = "folder-row";
             tr.innerHTML = `
                 <td><strong>📁 <a href="#" class="folder-link" data-id="${folder.id}" data-name="${escapeHtml(folder.name)}">${escapeHtml(folder.name)}</a></strong></td>
                 <td>—</td>
@@ -338,10 +443,12 @@ async function loadFiles() {
                 <td>${folder.is_group ? "Grupo" : "Personal"}</td>
                 <td>${formatDate(folder.created)}</td>
                 <td class="text-right">
+                    <button class="btn btn-secondary btn-sm folder-settings-btn" title="Ajustes de carpeta">⚙️</button>
                     <button class="btn btn-secondary btn-sm" onclick="deleteFolder('${folder.id}')">🗑️</button>
                 </td>
             `;
             tbody.appendChild(tr);
+            tr.querySelector(".folder-settings-btn").addEventListener("click", () => modalFolderSettings(folder));
         });
 
         tbody.querySelectorAll(".folder-link").forEach(a => {
@@ -353,6 +460,7 @@ async function loadFiles() {
 
         filesData.items.forEach(file => {
             const tr = document.createElement("tr");
+            tr.className = "file-row";
             const fileNameLower = file.name.toLowerCase();
             const isOfficeDoc = OFFICE_EXTENSIONS.some(ext => fileNameLower.endsWith(ext));
 
@@ -369,6 +477,8 @@ async function loadFiles() {
                 <td>${formatDate(file.created)}</td>
                 <td class="text-right">
                     ${editBtn}
+                    ${fileNameLower.endsWith(".pdf") ? `<button type="button" class="open-pdf-btn btn btn-secondary btn-sm" data-file-id="${escapeHtml(file.id)}" data-storage-name="${escapeHtml(file.file)}" data-file-name="${escapeHtml(file.name)}" title="Abrir visor PDF">👁️</button>` : ""}
+                    <button type="button" class="file-settings-btn btn btn-secondary btn-sm" title="Ajustes del archivo">⚙️</button>
                     <button type="button" class="download-file-btn btn btn-secondary btn-sm"
                         data-file-id="${escapeHtml(file.id)}"
                         data-storage-name="${escapeHtml(file.file)}"
@@ -383,10 +493,199 @@ async function loadFiles() {
                 const button = event.currentTarget;
                 downloadFile(button.dataset.fileId, button.dataset.storageName, button.dataset.fileName);
             });
+            const pdfButton = tr.querySelector(".open-pdf-btn");
+            if (pdfButton) {
+                pdfButton.addEventListener("click", (event) => {
+                    const button = event.currentTarget;
+                    openPdfViewer(button.dataset.fileId, button.dataset.storageName, button.dataset.fileName);
+                });
+            }
+            tr.querySelector(".file-settings-btn").addEventListener("click", () => modalFileSettings(file));
         });
+        if (!state.preferences.folders_first) {
+            tbody.querySelectorAll(".file-row").forEach(row => tbody.appendChild(row));
+            tbody.querySelectorAll(".folder-row").forEach(row => tbody.appendChild(row));
+        }
     } catch (err) {
         tbody.innerHTML = `<tr><td colspan="6" class="text-center alert-error">Error al cargar: ${err.message}</td></tr>`;
     }
+}
+
+async function openPdfViewer(fileId, storageName, fileName) {
+    if (!window.pdfjsLib) return alert("El visor PDF no está disponible.");
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    const pdf = state.pdf;
+    const operationId = ++pdf.openId;
+    pdf.loadingTask?.destroy();
+    pdf.loadingTask = null;
+    pdf.document = null;
+    pdf.fileId = fileId;
+    pdf.page = 1;
+    pdf.scale = 1.15;
+    pdf.annotations = [];
+    pdf.highlightMode = false;
+    document.getElementById("pdf-title").textContent = fileName;
+    document.getElementById("pdf-modal").style.display = "flex";
+    document.getElementById("pdf-loading").style.display = "block";
+    document.getElementById("pdf-canvas").style.display = "none";
+    updatePdfToolbar();
+    try {
+        const fileUrl = `${CONFIG.API_URL}/api/files/files/${fileId}/${encodeURIComponent(storageName)}?token=${encodeURIComponent(state.token)}`;
+        pdf.loadingTask = window.pdfjsLib.getDocument({ url: fileUrl });
+        pdf.document = await pdf.loadingTask.promise;
+        if (operationId !== pdf.openId) return;
+        await loadPdfAnnotations(operationId);
+        await renderPdfPage();
+    } catch (err) {
+        if (operationId !== pdf.openId) return;
+        closePdfViewer();
+        alert(`Error al abrir el PDF: ${err.message}`);
+    }
+}
+
+function closePdfViewer() {
+    state.pdf.openId += 1;
+    state.pdf.loadingTask?.destroy();
+    state.pdf.loadingTask = null;
+    state.pdf.document = null;
+    document.getElementById("pdf-modal").style.display = "none";
+}
+
+async function renderPdfPage() {
+    const pdf = state.pdf;
+    if (!pdf.document) return;
+    if (pdf.rendering) {
+        pdf.renderQueued = true;
+        return;
+    }
+    pdf.rendering = true;
+    try {
+        const page = await pdf.document.getPage(pdf.page);
+        const viewport = page.getViewport({ scale: pdf.scale });
+        const canvas = document.getElementById("pdf-canvas");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        canvas.style.display = "block";
+        await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+        document.getElementById("pdf-loading").style.display = "none";
+        renderPdfAnnotations();
+        updatePdfToolbar();
+    } finally {
+        pdf.rendering = false;
+        if (pdf.renderQueued) {
+            pdf.renderQueued = false;
+            renderPdfPage();
+        }
+    }
+}
+
+function updatePdfToolbar() {
+    const pdf = state.pdf;
+    document.getElementById("pdf-page-label").textContent = pdf.document ? `Página ${pdf.page} / ${pdf.document.numPages}` : "Cargando...";
+    document.getElementById("pdf-previous").disabled = !pdf.document || pdf.page <= 1;
+    document.getElementById("pdf-next").disabled = !pdf.document || pdf.page >= pdf.document.numPages;
+    document.getElementById("pdf-highlight-toggle").classList.toggle("btn-primary", pdf.highlightMode);
+}
+
+function changePdfPage(delta) {
+    if (!state.pdf.document) return;
+    state.pdf.page = Math.max(1, Math.min(state.pdf.document.numPages, state.pdf.page + delta));
+    renderPdfPage();
+}
+
+function changePdfZoom(delta) {
+    state.pdf.scale = Math.max(0.6, Math.min(2.5, state.pdf.scale + delta));
+    renderPdfPage();
+}
+
+function togglePdfHighlightMode() {
+    state.pdf.highlightMode = !state.pdf.highlightMode;
+    document.getElementById("pdf-annotation-layer").classList.toggle("is-highlight-mode", state.pdf.highlightMode);
+    updatePdfToolbar();
+}
+
+function beginPdfHighlight(event) {
+    if (!state.pdf.highlightMode || event.target !== event.currentTarget) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    event.currentTarget.dataset.startX = String(event.clientX - rect.left);
+    event.currentTarget.dataset.startY = String(event.clientY - rect.top);
+    event.currentTarget.setPointerCapture(event.pointerId);
+}
+
+async function finishPdfHighlight(event) {
+    const layer = event.currentTarget;
+    if (!state.pdf.highlightMode || !layer.dataset.startX) return;
+    const rect = layer.getBoundingClientRect();
+    const startX = Number(layer.dataset.startX);
+    const startY = Number(layer.dataset.startY);
+    const endX = event.clientX - rect.left;
+    const endY = event.clientY - rect.top;
+    delete layer.dataset.startX;
+    delete layer.dataset.startY;
+    const x = Math.min(startX, endX) / rect.width;
+    const y = Math.min(startY, endY) / rect.height;
+    const width = Math.abs(endX - startX) / rect.width;
+    const height = Math.abs(endY - startY) / rect.height;
+    if (width > 0.01 && height > 0.01) await savePdfAnnotation({ type: "highlight", x, y, width, height });
+}
+
+async function savePdfComment() {
+    const input = document.getElementById("pdf-comment-input");
+    const text = input.value.trim();
+    if (!text) return;
+    await savePdfAnnotation({ type: "comment", text });
+    input.value = "";
+}
+
+async function savePdfAnnotation(annotation) {
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/collections/file_annotations/records`, {
+            method: "POST",
+            headers: getHeaders(),
+            body: JSON.stringify({ file: state.pdf.fileId, owner: state.user.id, page: state.pdf.page, type: annotation.type, text: annotation.text || "", x: annotation.x || 0, y: annotation.y || 0, width: annotation.width || 0, height: annotation.height || 0, color: annotation.type === "comment" ? "#2563eb" : "#facc15" })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || data.error || "No se pudo guardar la anotación.");
+        state.pdf.annotations.push(data);
+        renderPdfAnnotations();
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+async function loadPdfAnnotations(operationId = state.pdf.openId) {
+    const filter = `file = '${state.pdf.fileId}'`;
+    const res = await fetch(`${CONFIG.API_URL}/api/collections/file_annotations/records?filter=${encodeURIComponent(filter)}&sort=page,created`, { headers: getHeaders() });
+    const data = await getCollectionData(res, "las anotaciones");
+    if (operationId !== state.pdf.openId) return;
+    state.pdf.annotations = data.items;
+}
+
+function renderPdfAnnotations() {
+    const pdf = state.pdf;
+    const layer = document.getElementById("pdf-annotation-layer");
+    const list = document.getElementById("pdf-annotations-list");
+    const canvas = document.getElementById("pdf-canvas");
+    layer.style.width = `${canvas.width}px`;
+    layer.style.height = `${canvas.height}px`;
+    layer.innerHTML = "";
+    list.innerHTML = "";
+    pdf.annotations.filter(item => Number(item.page) === pdf.page).forEach(item => {
+        if (item.type === "highlight") {
+            const mark = document.createElement("div");
+            mark.className = "pdf-highlight";
+            mark.style.left = `${Number(item.x) * 100}%`;
+            mark.style.top = `${Number(item.y) * 100}%`;
+            mark.style.width = `${Number(item.width) * 100}%`;
+            mark.style.height = `${Number(item.height) * 100}%`;
+            layer.appendChild(mark);
+        }
+        const card = document.createElement("div");
+        card.className = "pdf-annotation-card";
+        card.innerHTML = `<strong>${item.type === "highlight" ? "Subrayado" : "Comentario"}</strong><span>${escapeHtml(item.text || `Página ${item.page}`)}</span>`;
+        list.appendChild(card);
+    });
 }
 
 async function downloadFile(fileId, storageName, fileName) {
@@ -502,6 +801,7 @@ async function trashFile(fileId) {
                 body: JSON.stringify({ trashed: true, trashed_at: new Date().toISOString() })
             });
             if (!res.ok) throw new Error("No se pudo mover el archivo a la papelera.");
+            await recordActivity("file", fileId, "trash");
         });
         loadFiles();
         loadQuota();
@@ -514,11 +814,12 @@ async function deleteFolder(folderId) {
     if (!confirm("¿Eliminar esta carpeta?")) return;
     try {
         await withResourceLock("folders", folderId, async (lockToken) => {
-            const res = await fetch(`${CONFIG.API_URL}/api/collections/folders/records/${folderId}`, {
-                method: "DELETE",
-                headers: { ...getHeaders(), "X-Resource-Lock": lockToken }
+            const res = await fetch(`${CONFIG.API_URL}/api/custom/file-trash/folders/${folderId}/trash`, {
+                method: "POST",
+                headers: getHeaders(false)
             });
             if (!res.ok) throw new Error("No se pudo eliminar la carpeta.");
+            await recordActivity("folder", folderId, "trash", "Contenido enviado a papelera");
         });
         loadFiles();
     } catch (err) {
@@ -526,27 +827,102 @@ async function deleteFolder(folderId) {
     }
 }
 
+async function loadTrash() {
+        const tbody = document.getElementById("trash-list");
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center">Cargando papelera...</td></tr>`;
+        try {
+            const res = await fetch(`${CONFIG.API_URL}/api/custom/file-trash`, { headers: getHeaders(false) });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "No se pudo cargar la papelera.");
+            tbody.innerHTML = "";
+            if (!data.items.length) {
+                tbody.innerHTML = `<tr><td colspan="5" class="text-center">La papelera está vacía.</td></tr>`;
+                return;
+            }
+            data.items.forEach(item => {
+                const tr = document.createElement("tr");
+                tr.innerHTML = `
+                    <td>${item.type === "folder" ? "📁" : "📄"} ${escapeHtml(item.name)}</td>
+                    <td>${item.type === "folder" ? "Carpeta" : "Archivo"}</td>
+                    <td>${item.type === "folder" ? "—" : formatBytes(item.size)}</td>
+                    <td>${formatDate(item.trashedAt)}</td>
+                    <td class="text-right">
+                        <button class="btn btn-secondary btn-sm restore-trash-btn">↩️ Restaurar</button>
+                        <button class="btn btn-danger btn-sm purge-trash-btn">Eliminar definitivamente</button>
+                    </td>`;
+                tr.querySelector(".restore-trash-btn").onclick = () => restoreTrashItem(item);
+                tr.querySelector(".purge-trash-btn").onclick = () => purgeTrashItem(item);
+                tbody.appendChild(tr);
+            });
+        } catch (err) {
+            tbody.innerHTML = `<tr><td colspan="5" class="text-center alert-error">${escapeHtml(err.message)}</td></tr>`;
+        }
+}
+
+async function restoreTrashItem(item) {
+        try {
+            const res = await fetch(`${CONFIG.API_URL}/api/custom/file-trash/${item.type === "file" ? "files" : "folders"}/${item.id}/restore`, { method: "POST", headers: getHeaders(false) });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "No se pudo restaurar.");
+            await recordActivity(item.type, item.id, "restore");
+            loadTrash();
+            if (state.currentView === "files") loadFiles();
+        } catch (err) { alert(err.message); }
+}
+
+async function purgeTrashItem(item) {
+        if (!confirm("Esta acción no se puede deshacer. ¿Continuar?")) return;
+        try {
+            const type = item.type === "file" ? "files" : "folders";
+            const res = await fetch(`${CONFIG.API_URL}/api/custom/file-trash/${type}/${item.id}`, { method: "DELETE", headers: getHeaders(false) });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "No se pudo eliminar definitivamente.");
+            loadTrash();
+        } catch (err) { alert(err.message); }
+}
+
 // ==========================================
 // 4. SUBIDA POR BLOQUES (CHUNKING)
 // ==========================================
 
 function triggerFileSelect() {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.onchange = (e) => {
-        const file = e.target.files[0];
-        if (file) uploadFileInChunks(file);
-    };
-    input.click();
+    document.getElementById("file-picker")?.click();
 }
 
-async function uploadFileInChunks(file) {
+function queueFiles(fileList) {
+    const files = Array.from(fileList || []).filter(file => file.size > 0);
+    if (files.length === 0) return;
+
+    state.uploadQueue.push(...files.map(file => ({ file, folderId: state.currentFolder })));
+    if (!state.uploadInProgress) {
+        processUploadQueue();
+    }
+}
+
+async function processUploadQueue() {
+    if (state.uploadInProgress) return;
+    state.uploadInProgress = true;
+    try {
+        while (state.uploadQueue.length > 0) {
+            const queued = state.uploadQueue.shift();
+            await uploadFileInChunks(queued.file, queued.folderId);
+        }
+    } finally {
+        state.uploadInProgress = false;
+        document.getElementById("upload-modal").style.display = "none";
+        loadFiles();
+        loadQuota();
+    }
+}
+
+async function uploadFileInChunks(file, folderId) {
     const modal = document.getElementById("upload-modal");
     const nameEl = document.getElementById("upload-filename");
     const fillEl = document.getElementById("upload-progress-fill");
     const bytesEl = document.getElementById("upload-bytes-stat");
     const pctEl = document.getElementById("upload-percentage-stat");
     const subtextEl = document.getElementById("upload-chunk-stat");
+    const queueEl = document.getElementById("upload-queue-stat");
 
     modal.style.display = "flex";
     nameEl.textContent = `Subiendo: ${file.name}`;
@@ -554,6 +930,9 @@ async function uploadFileInChunks(file) {
     bytesEl.textContent = `0 MB / ${formatMB(file.size)} MB`;
     pctEl.textContent = "0.0%";
     subtextEl.textContent = "Iniciando fragmentación...";
+    queueEl.textContent = state.uploadQueue.length
+        ? `${state.uploadQueue.length} archivo(s) más en cola`
+        : "";
 
     const uploadId = "upl_" + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
     const totalChunks = Math.ceil(file.size / CONFIG.CHUNK_SIZE);
@@ -574,7 +953,7 @@ async function uploadFileInChunks(file) {
         formData.append("chunkIndex", i.toString());
         formData.append("totalChunks", totalChunks.toString());
         formData.append("fileName", file.name);
-        formData.append("folderId", state.currentFolder);
+        formData.append("folderId", folderId || "");
         formData.append("chunk", chunkBlob, file.name);
 
         subtextEl.textContent = `Enviando fragmento ${i + 1} de ${totalChunks}...`;
@@ -623,17 +1002,13 @@ async function uploadFileInChunks(file) {
             pctEl.textContent = `${percentage}%`;
         } catch (err) {
             alert(`Error en la subida: ${err.message}`);
-            modal.style.display = "none";
+            subtextEl.textContent = `Error: ${err.message}`;
             return;
         }
     }
 
     subtextEl.textContent = "Ensamblando y verificando integridad...";
-    setTimeout(() => {
-        modal.style.display = "none";
-        loadFiles();
-        loadQuota();
-    }, 600);
+    await new Promise(resolve => setTimeout(resolve, 600));
 }
 
 // ==========================================
@@ -1091,6 +1466,134 @@ function openModal(title, contentHtml, canClose = true) {
 
 function closeModal() {
     document.getElementById("generic-modal").style.display = "none";
+}
+
+function modalFolderSettings(folder) {
+    openModal("Ajustes de carpeta", `
+        <form id="form-folder-settings">
+            <div class="form-group">
+                <label for="folder-settings-name">Nombre</label>
+                <input type="text" id="folder-settings-name" value="${escapeHtml(folder.name)}" maxlength="255" required>
+            </div>
+            <label class="checkbox-row">
+                <input type="checkbox" id="folder-settings-group" ${folder.is_group ? "checked" : ""}>
+                Compartir con mi grupo
+            </label>
+            <p class="form-help">${state.user.user_group ? "Los miembros del grupo podrán ver su contenido." : "Tu usuario no pertenece a ningún grupo."}</p>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-danger" id="folder-settings-delete">Eliminar</button>
+                <button type="submit" class="btn btn-primary">Guardar cambios</button>
+            </div>
+        </form>
+    `);
+
+    const groupInput = document.getElementById("folder-settings-group");
+    groupInput.disabled = !state.user.user_group;
+    document.getElementById("form-folder-settings").onsubmit = async (event) => {
+        event.preventDefault();
+        const name = document.getElementById("folder-settings-name").value.trim();
+        const isGroup = groupInput.checked;
+        if (!name) return;
+        try {
+            await withResourceLock("folders", folder.id, async (lockToken) => {
+                const res = await fetch(`${CONFIG.API_URL}/api/collections/folders/records/${folder.id}`, {
+                    method: "PATCH",
+                    headers: { ...getHeaders(), "X-Resource-Lock": lockToken },
+                    body: JSON.stringify({
+                        name,
+                        is_group: isGroup,
+                        group: isGroup ? state.user.user_group : null
+                    })
+                });
+                if (!res.ok) throw new Error("No se pudieron guardar los ajustes de la carpeta.");
+            });
+                    await recordActivity("folder", folder.id, "rename", `Nombre: ${name}`);
+                    closeModal();
+            loadFiles();
+        } catch (err) {
+            alert(err.message);
+        }
+    };
+    document.getElementById("folder-settings-delete").onclick = () => {
+        closeModal();
+        deleteFolder(folder.id);
+    };
+}
+
+async function modalFileSettings(file) {
+    let folders = [];
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/collections/folders/records?sort=name&perPage=200`, { headers: getHeaders() });
+        const data = await getCollectionData(res, "las carpetas");
+        folders = data.items;
+    } catch (err) {
+        alert(err.message);
+        return;
+    }
+
+    const folderOptions = [`<option value="">Raíz</option>`]
+        .concat(folders.map(folder => `<option value="${escapeHtml(folder.id)}" ${folder.id === file.folder ? "selected" : ""}>${escapeHtml(folder.name)}</option>`))
+        .join("");
+    const foldersById = Object.fromEntries(folders.map(folder => [folder.id, folder]));
+    openModal("Ajustes del archivo", `
+        <form id="form-file-settings">
+            <div class="form-group">
+                <label for="file-settings-name">Nombre</label>
+                <input type="text" id="file-settings-name" value="${escapeHtml(file.name)}" maxlength="255" required>
+            </div>
+            <div class="form-group">
+                <label for="file-settings-folder">Carpeta</label>
+                <select id="file-settings-folder">${folderOptions}</select>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" id="file-history-btn">Historial</button>
+                <button type="submit" class="btn btn-primary">Guardar cambios</button>
+            </div>
+        </form>
+    `);
+    document.getElementById("file-history-btn").onclick = () => showFileHistory(file);
+    document.getElementById("form-file-settings").onsubmit = async (event) => {
+        event.preventDefault();
+        const name = document.getElementById("file-settings-name").value.trim();
+        const folderId = document.getElementById("file-settings-folder").value;
+        if (!name) return;
+        const selectedFolder = folderId ? foldersById[folderId] : null;
+        try {
+            await withResourceLock("files", file.id, async (lockToken) => {
+                const res = await fetch(`${CONFIG.API_URL}/api/collections/files/records/${file.id}`, {
+                    method: "PATCH",
+                    headers: { ...getHeaders(), "X-Resource-Lock": lockToken },
+                    body: JSON.stringify({
+                        name,
+                        folder: folderId || null,
+                        is_group: !!selectedFolder?.is_group,
+                        group: selectedFolder?.is_group ? selectedFolder.group : null
+                    })
+                });
+                if (!res.ok) throw new Error("No se pudieron guardar los ajustes del archivo.");
+            });
+            await recordActivity("file", file.id, folderId !== file.folder ? "move" : "rename", `Nombre: ${name}`);
+            closeModal();
+            loadFiles();
+        } catch (err) {
+            alert(err.message);
+        }
+
+        async function showFileHistory(file) {
+            try {
+                const res = await fetch(`${CONFIG.API_URL}/api/custom/file-activity?resourceId=${encodeURIComponent(file.id)}`, { headers: getHeaders(false) });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || "No se pudo cargar el historial.");
+                const labels = { upload: "Subido", rename: "Renombrado", move: "Movido", trash: "Enviado a papelera", restore: "Restaurado", edit: "Editado", download: "Descargado" };
+                const items = data.items.length
+                    ? data.items.map(item => `<div class="history-item"><strong>${labels[item.action] || item.action}</strong><span>${formatDate(item.created)}</span><small>${escapeHtml(item.details || "")}</small></div>`).join("")
+                    : `<p class="form-help">Todavía no hay actividad registrada.</p>`;
+                openModal(`Historial: ${file.name}`, `<div class="history-list">${items}</div>`);
+            } catch (err) {
+                alert(err.message);
+            }
+        }
+    };
 }
 
 function modalForcePasswordChange() {

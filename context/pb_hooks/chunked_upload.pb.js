@@ -47,9 +47,59 @@ routerAdd("POST", "/api/custom/upload-chunk", (c) => {
         chunkDir = `/tmp/pb_chunks/${uploadId}`;
         $os.mkdirAll(chunkDir, 493);
 
-        // Guardado del fragmento en disco temporal
+        // PocketBase no expone saveUploadedFile() en los hooks JavaScript.
+        // Usamos la abstracción de filesystem para leer el multipart y luego
+        // dejamos el fragmento en disco temporal para ensamblarlo sin cargar
+        // el archivo completo en memoria.
         const chunkPath = `${chunkDir}/${chunkIndex}.part`;
-        c.saveUploadedFile(chunkFile, chunkPath);
+        const tempKey = `__chunk_uploads/${uploadId}/${chunkIndex}.part`;
+        let fsys;
+        let reader;
+        let uploaded = false;
+        try {
+            fsys = $app.newFilesystem();
+            fsys.uploadMultipart(chunkFile, tempKey);
+            uploaded = true;
+            reader = fsys.getReader(tempKey);
+
+            const buffer = new Uint8Array(1024 * 1024);
+            let bytesRead;
+            let firstWrite = true;
+            while ((bytesRead = reader.read(buffer)) > 0) {
+                const bytes = buffer.slice(0, bytesRead);
+                if (firstWrite) {
+                    $os.writeFile(chunkPath, bytes, 420);
+                    firstWrite = false;
+                } else {
+                    const appendPath = `${chunkPath}.append`;
+                    $os.writeFile(appendPath, bytes, 420);
+                    const append = $os.cmd(
+                        "sh",
+                        "-c",
+                        'cat "$1" >> "$2"',
+                        "append-upload-chunk",
+                        appendPath,
+                        chunkPath
+                    );
+                    append.run();
+                    $os.remove(appendPath);
+                }
+            }
+            if (firstWrite) {
+                throw new Error("El fragmento recibido está vacío.");
+            }
+        } finally {
+            reader?.close();
+            if (fsys && uploaded) {
+                try {
+                    fsys.delete(tempKey);
+                } finally {
+                    fsys.close();
+                }
+            } else {
+                fsys?.close();
+            }
+        }
         const chunkStat = $os.stat(chunkPath);
         if (!chunkStat || chunkStat.size() > MAX_CHUNK_SIZE) {
             $os.removeAll(chunkDir);
@@ -150,6 +200,9 @@ routerAdd("POST", "/api/custom/upload-chunk", (c) => {
         record.set("file", fileObj);
 
         $app.dao().saveRecord(record);
+        if (typeof logFileActivity === "function") {
+            logFileActivity(authRecord, "file", record.id, "upload", fileName, `Subida de ${totalLength} bytes`);
+        }
 
         // 7. Purgado inmediato del directorio temporal
         $os.removeAll(chunkDir);

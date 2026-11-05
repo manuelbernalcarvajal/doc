@@ -162,6 +162,8 @@ onAfterBootstrap((e) => {
             maxSelect: 1
         }));
         foldersCol.schema.addField(helperField("is_group", "bool", false));
+        foldersCol.schema.addField(helperField("trashed", "bool", false));
+        foldersCol.schema.addField(helperField("trashed_at", "date", false));
 
         dao.saveCollection(foldersCol);
 
@@ -172,11 +174,26 @@ onAfterBootstrap((e) => {
         dao.saveCollection(foldersCol);
     } else {
         foldersCol = dao.findCollectionByNameOrId("folders");
+        if (!foldersCol.schema.getFieldByName("parent")) {
+            foldersCol.schema.addField(helperField("parent", "relation", false, {
+                collectionId: foldersCol.id,
+                maxSelect: 1
+            }));
+        }
+        if (!foldersCol.schema.getFieldByName("trashed")) foldersCol.schema.addField(helperField("trashed", "bool", false));
+        if (!foldersCol.schema.getFieldByName("trashed_at")) foldersCol.schema.addField(helperField("trashed_at", "date", false));
     }
+    foldersCol.listRule = rbacRule;
+    foldersCol.viewRule = rbacRule;
+    foldersCol.createRule = "@request.auth.id != '' && owner = @request.auth.id";
+    foldersCol.updateRule = rbacRule;
+    foldersCol.deleteRule = rbacRule;
+    dao.saveCollection(foldersCol);
 
     // 5. Colección: files
+    let filesCol;
     if (!collectionExists("files")) {
-        const filesCol = new Collection();
+        filesCol = new Collection();
         filesCol.name = "files";
         filesCol.type = "base";
         filesCol.listRule = rbacRule;
@@ -208,9 +225,101 @@ onAfterBootstrap((e) => {
         filesCol.schema.addField(helperField("trashed_at", "date", false));
 
         dao.saveCollection(filesCol);
+    } else {
+        filesCol = dao.findCollectionByNameOrId("files");
+        if (!filesCol.schema.getFieldByName("trashed")) filesCol.schema.addField(helperField("trashed", "bool", false));
+        if (!filesCol.schema.getFieldByName("trashed_at")) filesCol.schema.addField(helperField("trashed_at", "date", false));
+        filesCol.listRule = rbacRule;
+        filesCol.viewRule = rbacRule;
+        filesCol.createRule = "@request.auth.id != '' && owner = @request.auth.id";
+        filesCol.updateRule = rbacRule;
+        filesCol.deleteRule = rbacRule;
+        dao.saveCollection(filesCol);
     }
 
-    // 6. Colección: calendar_events
+    // 6. Preferencias de vista por usuario
+    let preferencesCol;
+    if (!collectionExists("user_preferences")) {
+        preferencesCol = new Collection();
+        preferencesCol.name = "user_preferences";
+        preferencesCol.type = "base";
+        preferencesCol.listRule = "owner = @request.auth.id";
+        preferencesCol.viewRule = "owner = @request.auth.id";
+        preferencesCol.createRule = "owner = @request.auth.id";
+        preferencesCol.updateRule = "owner = @request.auth.id";
+        preferencesCol.deleteRule = "owner = @request.auth.id";
+        preferencesCol.schema.addField(helperField("owner", "relation", true, { collectionId: usersCol.id, maxSelect: 1 }));
+        preferencesCol.schema.addField(helperField("folder_sort", "select", true, { maxSelect: 1, values: ["name", "created", "updated"] }));
+        preferencesCol.schema.addField(helperField("folder_direction", "select", true, { maxSelect: 1, values: ["asc", "desc"] }));
+        preferencesCol.schema.addField(helperField("file_sort", "select", true, { maxSelect: 1, values: ["name", "created", "updated", "size"] }));
+        preferencesCol.schema.addField(helperField("file_direction", "select", true, { maxSelect: 1, values: ["asc", "desc"] }));
+        preferencesCol.schema.addField(helperField("folders_first", "bool", false));
+        dao.saveCollection(preferencesCol);
+    }
+
+    // 7. Historial de actividad de archivos y carpetas
+    if (!collectionExists("file_activity")) {
+        const activityCol = new Collection();
+        activityCol.name = "file_activity";
+        activityCol.type = "base";
+        activityCol.listRule = "owner = @request.auth.id || actor = @request.auth.id";
+        activityCol.viewRule = activityCol.listRule;
+        activityCol.createRule = "";
+        activityCol.updateRule = "";
+        activityCol.deleteRule = "";
+        activityCol.schema.addField(helperField("owner", "relation", true, { collectionId: usersCol.id, maxSelect: 1 }));
+        activityCol.schema.addField(helperField("actor", "relation", true, { collectionId: usersCol.id, maxSelect: 1 }));
+        activityCol.schema.addField(helperField("resource_type", "select", true, { maxSelect: 1, values: ["file", "folder"] }));
+        activityCol.schema.addField(helperField("resource_id", "text", true, { max: 1, max: 64 }));
+        activityCol.schema.addField(helperField("action", "select", true, { maxSelect: 1, values: ["upload", "rename", "move", "trash", "restore", "purge", "edit", "download"] }));
+        activityCol.schema.addField(helperField("resource_name", "text", false, { max: 255 }));
+        activityCol.schema.addField(helperField("details", "text", false, { max: 4000 }));
+        dao.saveCollection(activityCol);
+    }
+
+    // 8. Colección: file_annotations (anotaciones ligeras del visor PDF)
+    if (!collectionExists("file_annotations")) {
+        const annotationsCol = new Collection();
+        annotationsCol.name = "file_annotations";
+        annotationsCol.type = "base";
+        annotationsCol.listRule = "@request.auth.id != '' && (owner = @request.auth.id || file.owner = @request.auth.id || (file.is_group = true && file.group = @request.auth.user_group) || @request.auth.role = 'admin')";
+        annotationsCol.viewRule = annotationsCol.listRule;
+        annotationsCol.createRule = "@request.auth.id != '' && owner = @request.auth.id";
+        annotationsCol.updateRule = "@request.auth.id != '' && owner = @request.auth.id";
+        annotationsCol.deleteRule = "@request.auth.id != '' && owner = @request.auth.id";
+
+        annotationsCol.schema.addField(helperField("file", "relation", true, {
+            collectionId: filesCol ? filesCol.id : dao.findCollectionByNameOrId("files").id,
+            maxSelect: 1
+        }));
+        annotationsCol.schema.addField(helperField("owner", "relation", true, {
+            collectionId: usersCol.id,
+            maxSelect: 1
+        }));
+        annotationsCol.schema.addField(helperField("page", "number", true));
+        annotationsCol.schema.addField(helperField("type", "select", true, {
+            maxSelect: 1,
+            values: ["highlight", "comment"]
+        }));
+        annotationsCol.schema.addField(helperField("text", "text", false, { max: 4000 }));
+        annotationsCol.schema.addField(helperField("quote", "text", false, { max: 1000 }));
+        annotationsCol.schema.addField(helperField("x", "number", false));
+        annotationsCol.schema.addField(helperField("y", "number", false));
+        annotationsCol.schema.addField(helperField("width", "number", false));
+        annotationsCol.schema.addField(helperField("height", "number", false));
+        annotationsCol.schema.addField(helperField("color", "text", false, { max: 20 }));
+        dao.saveCollection(annotationsCol);
+    } else {
+        const annotationsCol = dao.findCollectionByNameOrId("file_annotations");
+        annotationsCol.listRule = "@request.auth.id != '' && (owner = @request.auth.id || file.owner = @request.auth.id || (file.is_group = true && file.group = @request.auth.user_group) || @request.auth.role = 'admin')";
+        annotationsCol.viewRule = annotationsCol.listRule;
+        annotationsCol.createRule = "@request.auth.id != '' && owner = @request.auth.id";
+        annotationsCol.updateRule = "@request.auth.id != '' && owner = @request.auth.id";
+        annotationsCol.deleteRule = "@request.auth.id != '' && owner = @request.auth.id";
+        dao.saveCollection(annotationsCol);
+    }
+
+    // 9. Colección: calendar_events
     if (!collectionExists("calendar_events")) {
         const calCol = new Collection();
         calCol.name = "calendar_events";

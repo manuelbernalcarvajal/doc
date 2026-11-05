@@ -22,15 +22,8 @@ routerAdd("POST", "/api/custom/wopi-token", (c) => {
     if (!fileId) return c.json(400, { error: "Falta el identificador del archivo." });
 
     const file = $app.dao().findRecordById("files", fileId);
-    if (!file) return c.json(404, { error: "Archivo no encontrado." });
-
-    // Verificación de permisos según RBAC
-    const isOwner = file.getString("owner") === authRecord.id;
-    const isGroupMember = file.getBool("is_group") && file.getString("group") === authRecord.getString("user_group");
-    const isAdmin = authRecord.getString("role") === "admin";
-
-    if (!isOwner && !isGroupMember && !isAdmin) {
-        return c.json(403, { error: "Acceso denegado a este documento." });
+    if (!file || !canAccessWopiFile(file, authRecord)) {
+        return c.json(404, { error: "Archivo no encontrado o no autorizado." });
     }
 
     // Comprobar si WOPI está activado en los ajustes generales
@@ -87,6 +80,43 @@ function getWopiSession(c) {
     return session;
 }
 
+function canAccessWopiFile(file, user) {
+    if (!file || !user || file.getBool("trashed")) return false;
+    return user.getString("role") === "admin"
+        || file.getString("owner") === user.id
+        || (file.getBool("is_group") && file.getString("group") === user.getString("user_group"));
+}
+
+function getWopiFile(fileId, session) {
+    let file;
+    let user;
+    try {
+        file = $app.dao().findRecordById("files", fileId);
+        user = $app.dao().findRecordById("users", session.userId);
+    } catch (_) {
+        return null;
+    }
+    if (!file) return null;
+    if (!canAccessWopiFile(file, user)) return null;
+    return { file, user };
+}
+
+function getUserUsedBytes(userId, excludeFileId) {
+    const files = $app.dao().findRecordsByFilter(
+        "files",
+        "owner = {:owner} && trashed = false",
+        "",
+        10000,
+        0,
+        { owner: userId }
+    );
+    let used = 0;
+    for (let item of files) {
+        if (item.id !== excludeFileId) used += item.getInt("size");
+    }
+    return used;
+}
+
 function getWopiLock(fileId) {
     return findActiveResourceLock("files", fileId);
 }
@@ -102,8 +132,9 @@ routerAdd("GET", "/wopi/files/:fileId", (c) => {
     const fileId = c.pathParam("fileId");
     if (session.fileId !== fileId) return c.json(403, { error: "Token no coincide con el archivo." });
 
-    const file = $app.dao().findRecordById("files", fileId);
-    if (!file) return c.json(404, { error: "Archivo no encontrado." });
+    const authorized = getWopiFile(fileId, session);
+    if (!authorized) return c.json(404, { error: "Archivo no encontrado o no autorizado." });
+    const file = authorized.file;
 
     return c.json(200, {
         BaseFileName: file.getString("name"),
@@ -194,8 +225,9 @@ routerAdd("GET", "/wopi/files/:fileId/contents", (c) => {
     const fileId = c.pathParam("fileId");
     if (session.fileId !== fileId) return c.json(403, { error: "Token no coincide con el archivo." });
 
-    const file = $app.dao().findRecordById("files", fileId);
-    if (!file) return c.json(404, { error: "Archivo no encontrado." });
+    const authorized = getWopiFile(fileId, session);
+    if (!authorized) return c.json(404, { error: "Archivo no encontrado o no autorizado." });
+    const file = authorized.file;
 
     // Emisión de token temporal para lectura de archivos protegidos
     const user = $app.dao().findRecordById("users", session.userId);
@@ -217,8 +249,9 @@ routerAdd("POST", "/wopi/files/:fileId/contents", (c) => {
     const fileId = c.pathParam("fileId");
     if (session.fileId !== fileId) return c.json(403, { error: "Token inválido." });
 
-    const file = $app.dao().findRecordById("files", fileId);
-    if (!file) return c.json(404, { error: "Archivo no encontrado." });
+    const authorized = getWopiFile(fileId, session);
+    if (!authorized) return c.json(404, { error: "Archivo no encontrado o no autorizado." });
+    const file = authorized.file;
 
     const currentLock = getWopiLock(fileId);
     const writeLockToken = c.request().header.get("X-WOPI-Lock") || "";
@@ -261,10 +294,23 @@ routerAdd("POST", "/wopi/files/:fileId/contents", (c) => {
             }
         } while (bytesRead > 0);
 
+        const maxFileSize = 10 * 1024 * 1024 * 1024;
+        const ownerUser = $app.dao().findRecordById("users", file.getString("owner"));
+        const quota = ownerUser.getInt("storage_quota");
+        if (totalBytes > maxFileSize) {
+            return c.json(413, { error: "El documento supera el límite máximo de 10 GB." });
+        }
+        if (quota > 0 && getUserUsedBytes(ownerUser.id, file.id) + totalBytes > quota) {
+            return c.json(413, { error: "La cuota de almacenamiento del usuario ha sido excedida." });
+        }
+
         const fileObj = $filesystem.fileFromPath(tempPath);
         file.set("file", fileObj);
         file.set("size", totalBytes);
         $app.dao().saveRecord(file);
+        if (typeof logFileActivity === "function") {
+            logFileActivity(authorized.user, "file", file.id, "edit", file.getString("name"), `Guardado WOPI de ${totalBytes} bytes`);
+        }
 
         return c.json(200, {
             ItemVersion: file.updated

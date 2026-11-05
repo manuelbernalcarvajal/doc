@@ -60,6 +60,28 @@ cronAdd("purge_trash", "0 5 * * *", () => {
         for (let record of trashedFiles) {
             $app.dao().deleteRecord(record);
         }
+
+        const trashedFolders = $app.dao().findRecordsByFilter(
+            "folders",
+            "trashed = true && trashed_at < {:cutoff}",
+            "-created",
+            100,
+            0,
+            { cutoff: thirtyDaysAgo }
+        );
+        for (let folder of trashedFolders) {
+            $app.dao().deleteRecord(folder);
+        }
+
+        const oldActivity = $app.dao().findRecordsByFilter(
+            "file_activity",
+            "created < {:cutoff}",
+            "created",
+            500,
+            0,
+            { cutoff: thirtyDaysAgo }
+        );
+        for (let activity of oldActivity) $app.dao().deleteRecord(activity);
     } catch (_) {}
 });
 

@@ -46,6 +46,9 @@
                 <button class="nav-item active" data-view="files">
                     <span class="nav-icon">📂</span> Archivos
                 </button>
+                <button class="nav-item" data-view="trash">
+                    <span class="nav-icon">🗑️</span> Papelera
+                </button>
                 <button class="nav-item" data-view="calendar">
                     <span class="nav-icon">📅</span> Calendario
                 </button>
@@ -86,6 +89,26 @@
                 <div class="file-breadcrumbs" id="file-breadcrumbs">
                     <span class="crumb-root" data-folder="">Inicio</span>
                 </div>
+                <div id="file-dropzone" class="file-dropzone" tabindex="0">
+                    <span class="dropzone-icon">⬆️</span>
+                    <div>
+                        <strong>Arrastra archivos aquí</strong>
+                        <span>o pulsa para seleccionarlos. Puedes subir varios a la vez.</span>
+                    </div>
+                    <input id="file-picker" type="file" multiple hidden>
+                </div>
+                <div class="files-toolbar">
+                    <label>Ordenar:
+                        <select id="files-sort-field" class="sort-select">
+                            <option value="name">Nombre</option>
+                            <option value="created">Fecha de creación</option>
+                            <option value="updated">Última modificación</option>
+                            <option value="size">Tamaño</option>
+                        </select>
+                    </label>
+                    <button type="button" id="files-sort-direction" class="btn btn-secondary btn-sm">A → Z</button>
+                    <label class="checkbox-row"><input type="checkbox" id="folders-first" checked> Carpetas primero</label>
+                </div>
                 <div class="table-container">
                     <table class="data-table">
                         <thead>
@@ -101,6 +124,19 @@
                         <tbody id="files-list">
                             <tr><td colspan="6" class="text-center">Cargando ficheros...</td></tr>
                         </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section id="view-trash" class="view-pane">
+                <div class="trash-toolbar">
+                    <p class="form-help">Los elementos se eliminan definitivamente automáticamente después de 30 días.</p>
+                    <button type="button" id="trash-refresh" class="btn btn-secondary btn-sm">Actualizar</button>
+                </div>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead><tr><th>Nombre</th><th>Tipo</th><th>Tamaño</th><th>En papelera desde</th><th class="text-right">Acciones</th></tr></thead>
+                        <tbody id="trash-list"><tr><td colspan="5" class="text-center">Cargando papelera...</td></tr></tbody>
                     </table>
                 </div>
             </section>
@@ -290,6 +326,35 @@
         <iframe id="wopi-iframe" allow="fullscreen" class="wopi-frame"></iframe>
     </div>
 
+    <div id="pdf-modal" class="modal-backdrop-fullscreen pdf-modal" style="display: none;">
+        <div class="pdf-header">
+            <strong id="pdf-title">Visor PDF</strong>
+            <div class="pdf-toolbar">
+                <button type="button" id="pdf-previous" class="btn btn-secondary btn-sm">‹</button>
+                <span id="pdf-page-label">Página 1 / 1</span>
+                <button type="button" id="pdf-next" class="btn btn-secondary btn-sm">›</button>
+                <button type="button" id="pdf-zoom-out" class="btn btn-secondary btn-sm">−</button>
+                <button type="button" id="pdf-zoom-in" class="btn btn-secondary btn-sm">+</button>
+                <button type="button" id="pdf-highlight-toggle" class="btn btn-secondary btn-sm">🖍️ Subrayar</button>
+                <button type="button" id="pdf-close" class="btn btn-secondary btn-sm">✖ Cerrar</button>
+            </div>
+        </div>
+        <div class="pdf-workspace">
+            <div class="pdf-page-container">
+                <div id="pdf-loading" class="pdf-loading">Cargando documento...</div>
+                <canvas id="pdf-canvas"></canvas>
+                <div id="pdf-annotation-layer" class="pdf-annotation-layer"></div>
+            </div>
+            <aside class="pdf-sidebar">
+                <h3>Anotaciones</h3>
+                <p class="pdf-help">Añade comentarios a la página actual o activa “Subrayar” y arrastra sobre el documento.</p>
+                <textarea id="pdf-comment-input" rows="4" placeholder="Escribe un comentario sobre esta página..."></textarea>
+                <button type="button" id="pdf-save-comment" class="btn btn-primary btn-block">Añadir comentario</button>
+                <div id="pdf-annotations-list" class="pdf-annotations-list"></div>
+            </aside>
+        </div>
+    </div>
+
     <!-- Modal de Subida con Métricas Exactas (MB y %) -->
     <div id="upload-modal" class="modal-backdrop" style="display: none;">
         <div class="modal-box">
@@ -302,6 +367,7 @@
                 <span id="upload-percentage-stat">0.0%</span>
             </div>
             <div class="progress-subtext" id="upload-chunk-stat">Preparando fragmentos...</div>
+            <div class="upload-queue-stat" id="upload-queue-stat"></div>
         </div>
     </div>
 
@@ -318,6 +384,7 @@
         </div>
     </div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
