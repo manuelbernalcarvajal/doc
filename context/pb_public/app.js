@@ -15,6 +15,7 @@ const OFFICE_EXTENSIONS = [
 ];
 
 let pendingMfaId = "";
+let sessionRefreshPromise = null;
 
 const state = {
     token: localStorage.getItem("pb_token") || "",
@@ -145,21 +146,37 @@ function initEventListeners() {
 
 async function verifySession() {
     try {
-        const res = await fetch(`${CONFIG.API_URL}/api/collections/users/auth-refresh`, {
-            method: "POST",
-            headers: getHeaders()
-        });
-        if (!res.ok) throw new Error("Sesión caducada");
-        const data = await res.json();
-        setSession(data.token, data.record);
+        await refreshSession();
 
-        if (data.record.force_password_change) {
+        if (state.user.force_password_change) {
             modalForcePasswordChange();
         } else {
             showDashboard();
         }
     } catch (_) {
         handleLogout();
+    }
+}
+
+async function refreshSession() {
+    if (sessionRefreshPromise) return sessionRefreshPromise;
+
+    sessionRefreshPromise = (async () => {
+        const res = await fetch(`${CONFIG.API_URL}/api/collections/users/auth-refresh`, {
+            method: "POST",
+            headers: getHeaders()
+        });
+        if (!res.ok) throw new Error("Sesión caducada");
+        const data = await res.json();
+        if (!data.token || !data.record) throw new Error("La respuesta de autenticación no es válida.");
+        setSession(data.token, data.record);
+        return data;
+    })();
+
+    try {
+        return await sessionRefreshPromise;
+    } finally {
+        sessionRefreshPromise = null;
     }
 }
 
@@ -961,6 +978,7 @@ async function uploadFileInChunks(file, folderId) {
         try {
             let res;
             let lastError;
+            let refreshedForChunk = false;
             for (let attempt = 1; attempt <= 3; attempt += 1) {
                 try {
                     res = await fetch(`${CONFIG.API_URL}/api/custom/upload-chunk`, {
@@ -983,6 +1001,13 @@ async function uploadFileInChunks(file, folderId) {
                         responseText ||
                         `Error HTTP ${res.status} al enviar el fragmento.`
                     );
+
+                    if ((res.status === 401 || res.status === 403) && !refreshedForChunk) {
+                        refreshedForChunk = true;
+                        subtextEl.textContent = "Renovando la sesión...";
+                        await refreshSession();
+                        continue;
+                    }
                 } catch (err) {
                     lastError = err;
                 }
