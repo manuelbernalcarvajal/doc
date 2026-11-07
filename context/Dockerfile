@@ -36,7 +36,7 @@ COPY entrypoint.sh /entrypoint.sh
 COPY maintenance.sh /maintenance.sh
 RUN chmod +x /entrypoint.sh /maintenance.sh
 
-# Puertos web HTTP y HTTPS
-EXPOSE 80 443
+# Caddy sirve HTTP; TLS debe terminar en el proxy externo
+EXPOSE 80
 
 ENTRYPOINT ["/entrypoint.sh"]
