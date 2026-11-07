@@ -15,7 +15,9 @@ Al estar la imagen precompilada y publicada en GitHub Container Registry, **no n
    ```
    Para otras distribuciones, instala Docker siguiendo la documentación oficial de tu sistema operativo.
 2. **Un Bucket S3** en tu proveedor (Cloudflare R2, Backblaze B2, AWS S3, etc.) con el nombre que elijas (ej: `mi-nube-datos`). La instalación comprueba el bucket y lo crea sólo si las credenciales tienen permiso; el almacenamiento interno `monolith-data` es una ruta virtual cifrada y no se crea como bucket adicional.
-3. **Un Dominio o Subdominio** apuntando a la IP de tu servidor (para que Caddy genere el certificado SSL automático), o `localhost` si pruebas en tu máquina.
+3. **Un proxy inverso externo opcional** (Cloudflare, Caddy, Nginx, etc.) si quieres exponer el servicio por HTTPS. El Caddy incluido sirve únicamente HTTP en el puerto 80 y no solicita certificados.
+
+Si usas Cloudflare como proxy, debe reenviar las peticiones al origen por HTTP (modo **Flexible**) o debes colocar otro proxy TLS delante del contenedor. El contenedor no expone HTTPS ni gestiona certificados.
 
 ---
 
@@ -40,7 +42,6 @@ services:
     init: true
     ports:
       - "80:80"
-      - "443:443"
     env_file:
       - .env
 
@@ -51,8 +52,6 @@ services:
     # Opción A: En disco duro estándar (Recomendado)
     volumes:
       - pb_data:/pb_data
-      - caddy_data:/data
-      - caddy_config:/config
 
     # Opción B: Modo RAM Pura (Comenta 'volumes' y descomenta 'tmpfs')
     # tmpfs:
@@ -69,8 +68,6 @@ services:
 volumes:
   pb_data:
     driver: local
-  caddy_data:
-  caddy_config:
 ```
 
 ### 3. Crear el archivo `.env`
@@ -82,8 +79,7 @@ openssl rand -base64 32
 Crea tu archivo `.env` y rellena tus datos:
 
 ```env
-# Dominio para HTTPS automático (o localhost para local)
-MY_DOMAIN=nube.tudominio.com
+# El HTTPS debe terminar en tu proxy externo; no hace falta configurar un dominio aquí.
 INITIAL_ADMIN_PASSWORD=cambia_esta_clave_por_una_larga_y_unica
 # === DATOS DE TU PROVEEDOR S3 EXTERNO ===
 # En Cloudflare R2: https://<account_id>.r2.cloudflarestorage.com

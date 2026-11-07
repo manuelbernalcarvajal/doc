@@ -8,11 +8,8 @@ services:
       - .env
     ports:
       - "80:80"
-      - "443:443"
     volumes:
       - pb_data:/pb_data
-      - caddy_data:/data
-      - caddy_config:/config
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1/"]
       interval: 30s
@@ -24,5 +21,3 @@ services:
 volumes:
   pb_data:
     driver: local
-  caddy_data:
-  caddy_config:

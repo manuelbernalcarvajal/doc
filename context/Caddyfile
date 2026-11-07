@@ -1,34 +1,33 @@
-{$MY_DOMAIN:localhost} {
-    # Bloqueo tajante del panel interno de PocketBase desde fuera
-    # Devuelve 404 (como si no existiera) para no dar pistas a escáneres
-    @blocked_admin {
-        path /_/*
-        path /_
-    }
-    handle @blocked_admin {
-        respond "Not Found" 404
-    }
+:80 {
+	# Bloqueo tajante del panel interno de PocketBase desde fuera
+	# Devuelve 404 (como si no existiera) para no dar pistas a escáneres
+	@blocked_admin {
+		path /_/*
+		path /_
+	}
+	handle @blocked_admin {
+		respond "Not Found" 404
+	}
 
-    # Proxy hacia la API y la interfaz pública
-    handle {
-        reverse_proxy 127.0.0.1:8090 {
-            flush_interval -1
-        }
-    }
+	# Proxy hacia la API y la interfaz pública
+	handle {
+		reverse_proxy 127.0.0.1:8090 {
+			flush_interval -1
+		}
+	}
 
-    # Desactiva buffering para agilizar subidas
-    request_body {
-        max_size 10GB
-    }
+	# Desactiva buffering para agilizar subidas
+	request_body {
+		max_size 10GB
+	}
 
-    encode zstd gzip
+	encode zstd gzip
 
-    # Cabeceras de seguridad
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-        X-Content-Type-Options "nosniff"
-        X-Frame-Options "SAMEORIGIN"
-        Referrer-Policy "strict-origin-when-cross-origin"
-        -Server
-    }
+	# Cabeceras de seguridad
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
 }
