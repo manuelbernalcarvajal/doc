@@ -138,6 +138,9 @@ Dentro de la aplicación, el usuario administrador tiene acceso a la pestaña **
 ### Trabajo sobre archivos
 
 * **Subidas:** Puedes arrastrar varios archivos a la vista actual; se procesan en cola y cada archivo conserva la carpeta seleccionada al comenzar la subida.
+  Las subidas grandes se envían mediante fragmentos reintentables y se finalizan
+  en una operación independiente, por lo que una interrupción no obliga a
+  ensamblar de nuevo los fragmentos ya recibidos (límite por archivo: 10 GB).
 * **Ajustes:** El botón ⚙️ de carpetas permite renombrar y cambiar su ámbito personal/grupo. El botón ⚙️ de cada archivo permite renombrarlo o moverlo sin descargarlo.
 * **PDF:** Los PDF se abren en el visor interno con paginación, zoom, comentarios por página y subrayados persistentes. Para edición avanzada de documentos ofimáticos se mantiene WOPI.
 * **Papelera:** Archivos y carpetas se conservan durante 30 días, se pueden restaurar de forma recursiva o eliminar definitivamente desde la sección Papelera.

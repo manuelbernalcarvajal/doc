@@ -37,12 +37,16 @@
     <!-- Interfaz Principal (Dashboard) -->
     <div id="app-container" class="dashboard-wrapper" style="display: none;">
         <!-- Barra Lateral -->
-        <aside class="sidebar">
+        <aside class="sidebar" id="app-sidebar">
             <div class="sidebar-brand">
+                <button type="button" class="mobile-menu-close" id="mobile-menu-close" aria-label="Cerrar menú">×</button>
                 <span class="app-icon" id="nav-app-icon">📁</span>
                 <span class="brand-text" id="nav-app-title">Nube</span>
             </div>
-            <nav class="sidebar-nav">
+            <nav class="sidebar-nav" aria-label="Navegación principal">
+                <button class="nav-item" data-view="overview">
+                    <span class="nav-icon">⌂</span> Inicio
+                </button>
                 <button class="nav-item active" data-view="files">
                     <span class="nav-icon">📂</span> Archivos
                 </button>
@@ -67,6 +71,7 @@
                         <span class="user-role-badge" id="user-display-role">user</span>
                     </div>
                 </div>
+                <button id="btn-theme-toggle" class="btn-logout" title="Cambiar tema" aria-label="Cambiar tema">◐</button>
                 <button id="btn-logout" class="btn-logout" title="Cerrar sesión">🚪</button>
             </div>
         </aside>
@@ -76,6 +81,7 @@
             <!-- Barra Superior -->
             <header class="topbar">
                 <div class="view-header">
+                    <button type="button" class="mobile-menu-toggle" id="mobile-menu-toggle" aria-label="Abrir menú" aria-expanded="false">☰</button>
                     <h1 id="current-view-title">Archivos</h1>
                     <span id="storage-quota-display" class="quota-pill">0 MB / 10 GB</span>
                 </div>
@@ -83,6 +89,38 @@
                     <!-- Botones dinámicos según sección -->
                 </div>
             </header>
+
+            <!-- Sección: Archivos -->
+            <section id="view-overview" class="view-pane">
+                <div class="overview-hero">
+                    <div>
+                        <span class="eyebrow">Espacio de trabajo</span>
+                        <h2 id="overview-greeting">Bienvenido</h2>
+                        <p>Ten tus documentos, agenda y contactos organizados en un solo lugar.</p>
+                    </div>
+                    <button type="button" class="btn btn-primary" id="overview-upload">⬆️ Subir archivos</button>
+                </div>
+                <div class="overview-stats" id="overview-stats">
+                    <article class="overview-stat"><span class="stat-icon">📦</span><div><strong>—</strong><span>Archivos</span></div></article>
+                    <article class="overview-stat"><span class="stat-icon">📁</span><div><strong>—</strong><span>Carpetas</span></div></article>
+                    <article class="overview-stat"><span class="stat-icon">📅</span><div><strong>—</strong><span>Próximos eventos</span></div></article>
+                    <article class="overview-stat"><span class="stat-icon">💾</span><div><strong>—</strong><span>Espacio utilizado</span></div></article>
+                </div>
+                <div class="overview-columns">
+                    <article class="surface-card">
+                        <div class="section-heading"><div><span class="eyebrow">Actividad</span><h3>Actividad reciente</h3></div><button class="btn btn-secondary btn-sm" id="overview-open-files">Ver archivos</button></div>
+                        <div id="overview-activity" class="activity-feed"><div class="empty-state compact">Cargando actividad...</div></div>
+                    </article>
+                    <article class="surface-card">
+                        <div class="section-heading"><div><span class="eyebrow">Accesos rápidos</span><h3>Qué quieres hacer</h3></div></div>
+                        <div class="quick-actions">
+                            <button class="quick-action" id="overview-new-folder"><span>📁</span><strong>Nueva carpeta</strong><small>Organiza tu espacio</small></button>
+                            <button class="quick-action" id="overview-new-event"><span>📅</span><strong>Nuevo evento</strong><small>Planifica tu agenda</small></button>
+                            <button class="quick-action" id="overview-new-contact"><span>👤</span><strong>Nuevo contacto</strong><small>Amplía tu agenda</small></button>
+                        </div>
+                    </article>
+                </div>
+            </section>
 
             <!-- Sección: Archivos -->
             <section id="view-files" class="view-pane active">
@@ -98,6 +136,9 @@
                     <input id="file-picker" type="file" multiple hidden>
                 </div>
                 <div class="files-toolbar">
+                    <label class="search-control" aria-label="Buscar en esta carpeta">
+                        <span>⌕</span><input type="search" id="files-search" placeholder="Buscar archivos y carpetas..." autocomplete="off">
+                    </label>
                     <label>Ordenar:
                         <select id="files-sort-field" class="sort-select">
                             <option value="name">Nombre</option>
@@ -108,6 +149,7 @@
                     </label>
                     <button type="button" id="files-sort-direction" class="btn btn-secondary btn-sm">A → Z</button>
                     <label class="checkbox-row"><input type="checkbox" id="folders-first" checked> Carpetas primero</label>
+                    <span id="files-count" class="toolbar-count"></span>
                 </div>
                 <div class="table-container">
                     <table class="data-table">
@@ -131,12 +173,15 @@
             <section id="view-trash" class="view-pane">
                 <div class="trash-toolbar">
                     <p class="form-help">Los elementos se eliminan definitivamente automáticamente después de 30 días.</p>
+                    <label class="checkbox-row"><input type="checkbox" id="trash-select-all"> Seleccionar todo</label>
+                    <button type="button" id="trash-restore-selected" class="btn btn-secondary btn-sm" disabled>↩️ Restaurar seleccionados</button>
+                    <button type="button" id="trash-empty" class="btn btn-danger btn-sm">Vaciar papelera</button>
                     <button type="button" id="trash-refresh" class="btn btn-secondary btn-sm">Actualizar</button>
                 </div>
                 <div class="table-container">
                     <table class="data-table">
-                        <thead><tr><th>Nombre</th><th>Tipo</th><th>Tamaño</th><th>En papelera desde</th><th class="text-right">Acciones</th></tr></thead>
-                        <tbody id="trash-list"><tr><td colspan="5" class="text-center">Cargando papelera...</td></tr></tbody>
+                        <thead><tr><th><span class="sr-only">Seleccionar</span></th><th>Nombre</th><th>Tipo</th><th>Tamaño</th><th>En papelera desde</th><th class="text-right">Acciones</th></tr></thead>
+                        <tbody id="trash-list"><tr><td colspan="6" class="text-center">Cargando papelera...</td></tr></tbody>
                     </table>
                 </div>
             </section>
@@ -315,6 +360,7 @@
                 </div>
             </section>
         </main>
+        <button type="button" class="sidebar-scrim" id="sidebar-scrim" aria-label="Cerrar menú"></button>
     </div>
 
     <!-- Modal WOPI para Edición de Documentos a Pantalla Completa -->

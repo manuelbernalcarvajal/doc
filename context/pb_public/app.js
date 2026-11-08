@@ -21,6 +21,7 @@ const state = {
     token: localStorage.getItem("pb_token") || "",
     user: JSON.parse(localStorage.getItem("pb_user") || "null"),
     currentView: "files",
+    filesSearch: "",
     currentFolder: "",
     folderPath: [],
     contactsCache: [],
@@ -40,6 +41,7 @@ const state = {
 // ==========================================
 
 document.addEventListener("DOMContentLoaded", () => {
+    applyColorScheme(localStorage.getItem("pb_color_scheme") || "light");
     fetchGlobalTheme();
     initEventListeners();
 
@@ -54,10 +56,36 @@ function initEventListeners() {
     document.getElementById("login-form").addEventListener("submit", handleLogin);
 
     document.querySelectorAll(".nav-item").forEach(btn => {
-        btn.addEventListener("click", () => switchView(btn.dataset.view));
+        btn.addEventListener("click", () => {
+            switchView(btn.dataset.view);
+            closeMobileMenu();
+        });
     });
 
     document.getElementById("btn-logout").addEventListener("click", handleLogout);
+    document.getElementById("btn-theme-toggle").addEventListener("click", toggleColorScheme);
+    document.getElementById("mobile-menu-toggle").addEventListener("click", toggleMobileMenu);
+    document.getElementById("mobile-menu-close").addEventListener("click", closeMobileMenu);
+    document.getElementById("sidebar-scrim").addEventListener("click", closeMobileMenu);
+    document.getElementById("overview-upload").addEventListener("click", triggerFileSelect);
+    document.getElementById("overview-open-files").addEventListener("click", () => switchView("files"));
+    document.getElementById("overview-new-folder").addEventListener("click", modalNewFolder);
+    document.getElementById("overview-new-event").addEventListener("click", modalNewEvent);
+    document.getElementById("overview-new-contact").addEventListener("click", modalNewContact);
+    document.getElementById("files-search").addEventListener("input", (event) => {
+        state.filesSearch = event.target.value.trim().toLowerCase();
+        loadFiles();
+    });
+    document.addEventListener("keydown", (event) => {
+        if (event.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) {
+            event.preventDefault();
+            document.getElementById("files-search").focus();
+        }
+        if (event.key === "Escape") {
+            closeMobileMenu();
+            closeModal();
+        }
+    });
 
     document.getElementById("contact-search").addEventListener("input", (e) => {
         renderContacts(e.target.value.toLowerCase());
@@ -91,6 +119,37 @@ function initEventListeners() {
         wopiForm.addEventListener("submit", handleSaveWopi);
     }
 
+    function applyColorScheme(scheme) {
+        document.documentElement.dataset.colorScheme = scheme;
+        const button = document.getElementById("btn-theme-toggle");
+        if (button) {
+            button.textContent = scheme === "dark" ? "☀" : "◐";
+            button.title = scheme === "dark" ? "Usar tema claro" : "Usar tema oscuro";
+        }
+    }
+
+    function toggleColorScheme() {
+        const next = document.documentElement.dataset.colorScheme === "dark" ? "light" : "dark";
+        localStorage.setItem("pb_color_scheme", next);
+        applyColorScheme(next);
+    }
+
+    function toggleMobileMenu() {
+        const sidebar = document.getElementById("app-sidebar");
+        const toggle = document.getElementById("mobile-menu-toggle");
+        const isOpen = sidebar.classList.toggle("is-open");
+        document.getElementById("sidebar-scrim").classList.toggle("is-visible", isOpen);
+        toggle.setAttribute("aria-expanded", String(isOpen));
+    }
+
+    function closeMobileMenu() {
+        const sidebar = document.getElementById("app-sidebar");
+        const toggle = document.getElementById("mobile-menu-toggle");
+        sidebar.classList.remove("is-open");
+        document.getElementById("sidebar-scrim").classList.remove("is-visible");
+        toggle.setAttribute("aria-expanded", "false");
+    }
+
     const smtpForm = document.getElementById("admin-smtp-form");
     if (smtpForm) {
         smtpForm.addEventListener("submit", handleSaveSmtp);
@@ -105,6 +164,9 @@ function initEventListeners() {
     document.getElementById("modal-close").addEventListener("click", closeModal);
     document.getElementById("btn-close-wopi").addEventListener("click", closeWopiEditor);
     document.getElementById("trash-refresh").addEventListener("click", loadTrash);
+    document.getElementById("trash-select-all").addEventListener("change", toggleTrashSelection);
+    document.getElementById("trash-restore-selected").addEventListener("click", restoreSelectedTrash);
+    document.getElementById("trash-empty").addEventListener("click", emptyTrash);
     document.getElementById("files-sort-field").addEventListener("change", saveSortPreferences);
     document.getElementById("files-sort-direction").addEventListener("click", toggleSortDirection);
     document.getElementById("folders-first").addEventListener("change", saveSortPreferences);
@@ -371,6 +433,7 @@ function switchView(viewName) {
     if (activePane) activePane.classList.add("active");
 
     const titles = {
+        overview: "Inicio",
         files: "Archivos",
         trash: "Papelera",
         calendar: "Calendario",
@@ -381,6 +444,7 @@ function switchView(viewName) {
 
     renderTopbarActions(viewName);
 
+    if (viewName === "overview") loadOverview();
     if (viewName === "files") loadFiles();
     if (viewName === "trash") loadTrash();
     if (viewName === "calendar") loadCalendar();
@@ -392,7 +456,13 @@ function renderTopbarActions(viewName) {
     const container = document.getElementById("topbar-actions");
     container.innerHTML = "";
 
-    if (viewName === "files") {
+    if (viewName === "overview") {
+        const btn = document.createElement("button");
+        btn.className = "btn btn-primary btn-sm";
+        btn.textContent = "⬆️ Subir archivos";
+        btn.onclick = triggerFileSelect;
+        container.appendChild(btn);
+    } else if (viewName === "files") {
         const btnUpload = document.createElement("button");
         btnUpload.className = "btn btn-primary btn-sm";
         btnUpload.innerHTML = "⬆️ Subir Archivo";
@@ -424,6 +494,63 @@ function renderTopbarActions(viewName) {
 // 3. ARCHIVOS Y WOPI
 // ==========================================
 
+async function loadOverview() {
+    const stats = document.getElementById("overview-stats");
+    const activity = document.getElementById("overview-activity");
+    const name = state.user?.name || state.user?.username || state.user?.email?.split("@")[0] || "usuario";
+    document.getElementById("overview-greeting").textContent = `Hola, ${name}`;
+    activity.innerHTML = `<div class="empty-state compact">Cargando actividad...</div>`;
+
+    try {
+        const [filesRes, foldersRes, eventsRes, activityRes] = await Promise.all([
+            fetch(`${CONFIG.API_URL}/api/collections/files/records?filter=(owner='${state.user.id}' && trashed=false)&perPage=200&fields=id,name,size,created,updated`, { headers: getHeaders() }),
+            fetch(`${CONFIG.API_URL}/api/collections/folders/records?filter=(owner='${state.user.id}' && trashed=false)&perPage=200&fields=id,name,created`, { headers: getHeaders() }),
+            fetch(`${CONFIG.API_URL}/api/collections/calendar_events/records?filter=(owner='${state.user.id}')&sort=start_time&perPage=5`, { headers: getHeaders() }),
+            fetch(`${CONFIG.API_URL}/api/custom/file-activity?perPage=8`, { headers: getHeaders(false) })
+        ]);
+        const [files, folders, events, activityData] = await Promise.all([
+            getCollectionData(filesRes, "los archivos"),
+            getCollectionData(foldersRes, "las carpetas"),
+            getCollectionData(eventsRes, "los eventos"),
+            activityRes.ok ? activityRes.json() : { items: [] }
+        ]);
+        const totalBytes = files.items.reduce((sum, file) => sum + (file.size || 0), 0);
+        const upcoming = events.items.filter(event => new Date(event.start_time) >= new Date()).length;
+        const values = [
+            [files.items.length, "Archivos", "📦"],
+            [folders.items.length, "Carpetas", "📁"],
+            [upcoming, "Próximos eventos", "📅"],
+            [formatBytes(totalBytes), "Espacio utilizado", "💾"]
+        ];
+        stats.innerHTML = values.map(([value, label, icon]) => `
+            <article class="overview-stat"><span class="stat-icon">${icon}</span><div><strong>${value}</strong><span>${label}</span></div></article>
+        `).join("");
+
+        const items = (activityData.items || []).slice(0, 6);
+        activity.innerHTML = items.length ? items.map(item => `
+            <div class="activity-item">
+                <span class="activity-dot"></span>
+                <div><strong>${escapeHtml(activityLabel(item.action))}</strong><span>${escapeHtml(item.resourceName || "Recurso")} · ${formatDateTime(item.created)}</span></div>
+            </div>
+        `).join("") : `<div class="empty-state compact"><strong>Aún no hay actividad</strong><span>Las acciones sobre tus archivos aparecerán aquí.</span></div>`;
+    } catch (err) {
+        activity.innerHTML = `<div class="empty-state compact alert-error">${escapeHtml(err.message)}</div>`;
+    }
+}
+
+function activityLabel(action) {
+    return ({
+        upload: "Archivo subido",
+        rename: "Elemento renombrado",
+        move: "Elemento movido",
+        trash: "Elemento enviado a la papelera",
+        restore: "Elemento restaurado",
+        purge: "Elemento eliminado",
+        edit: "Documento editado",
+        download: "Archivo descargado"
+    })[action] || "Actividad registrada";
+}
+
 async function loadFiles() {
     renderBreadcrumbs();
     const tbody = document.getElementById("files-list");
@@ -442,15 +569,24 @@ async function loadFiles() {
 
         const foldersData = await getCollectionData(foldersRes, "las carpetas");
         const filesData = await getCollectionData(filesRes, "los archivos");
+        const query = state.filesSearch;
+        const visibleFolders = query
+            ? foldersData.items.filter(folder => folder.name.toLowerCase().includes(query))
+            : foldersData.items;
+        const visibleFiles = query
+            ? filesData.items.filter(file => file.name.toLowerCase().includes(query))
+            : filesData.items;
 
         tbody.innerHTML = "";
+        document.getElementById("files-count").textContent =
+            `${visibleFolders.length + visibleFiles.length} elemento(s)`;
 
-        if (foldersData.items.length === 0 && filesData.items.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="6" class="text-center">Carpeta vacía</td></tr>`;
+        if (visibleFolders.length === 0 && visibleFiles.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" class="text-center empty-state">${query ? "No hay resultados para esa búsqueda." : "Carpeta vacía"}</td></tr>`;
             return;
         }
 
-        foldersData.items.forEach(folder => {
+        visibleFolders.forEach(folder => {
             const tr = document.createElement("tr");
             tr.className = "folder-row";
             tr.innerHTML = `
@@ -475,7 +611,7 @@ async function loadFiles() {
             });
         });
 
-        filesData.items.forEach(file => {
+        visibleFiles.forEach(file => {
             const tr = document.createElement("tr");
             tr.className = "file-row";
             const fileNameLower = file.name.toLowerCase();
@@ -846,19 +982,25 @@ async function deleteFolder(folderId) {
 
 async function loadTrash() {
         const tbody = document.getElementById("trash-list");
-        tbody.innerHTML = `<tr><td colspan="5" class="text-center">Cargando papelera...</td></tr>`;
+        const selectAll = document.getElementById("trash-select-all");
+        selectAll.checked = false;
+        selectAll.disabled = true;
+        updateTrashSelectionActions();
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center">Cargando papelera...</td></tr>`;
         try {
             const res = await fetch(`${CONFIG.API_URL}/api/custom/file-trash`, { headers: getHeaders(false) });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || "No se pudo cargar la papelera.");
             tbody.innerHTML = "";
             if (!data.items.length) {
-                tbody.innerHTML = `<tr><td colspan="5" class="text-center">La papelera está vacía.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="6" class="text-center empty-state">La papelera está vacía.</td></tr>`;
                 return;
             }
+            selectAll.disabled = false;
             data.items.forEach(item => {
                 const tr = document.createElement("tr");
                 tr.innerHTML = `
+                    <td><input type="checkbox" class="trash-item-check" aria-label="Seleccionar ${escapeHtml(item.name)}"></td>
                     <td>${item.type === "folder" ? "📁" : "📄"} ${escapeHtml(item.name)}</td>
                     <td>${item.type === "folder" ? "Carpeta" : "Archivo"}</td>
                     <td>${item.type === "folder" ? "—" : formatBytes(item.size)}</td>
@@ -869,11 +1011,77 @@ async function loadTrash() {
                     </td>`;
                 tr.querySelector(".restore-trash-btn").onclick = () => restoreTrashItem(item);
                 tr.querySelector(".purge-trash-btn").onclick = () => purgeTrashItem(item);
+                tr.querySelector(".trash-item-check").dataset.item = JSON.stringify(item);
+                tr.querySelector(".trash-item-check").addEventListener("change", updateTrashSelectionActions);
                 tbody.appendChild(tr);
             });
         } catch (err) {
-            tbody.innerHTML = `<tr><td colspan="5" class="text-center alert-error">${escapeHtml(err.message)}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="6" class="text-center alert-error">${escapeHtml(err.message)}</td></tr>`;
         }
+}
+
+function getSelectedTrashItems() {
+    return Array.from(document.querySelectorAll(".trash-item-check:checked"))
+        .map(input => JSON.parse(input.dataset.item));
+}
+
+function toggleTrashSelection(event) {
+    document.querySelectorAll(".trash-item-check").forEach(input => {
+        input.checked = event.target.checked;
+    });
+    updateTrashSelectionActions();
+}
+
+function updateTrashSelectionActions() {
+    const selected = document.querySelectorAll(".trash-item-check:checked").length;
+    const restoreButton = document.getElementById("trash-restore-selected");
+    restoreButton.disabled = selected === 0;
+    restoreButton.textContent = selected ? `↩️ Restaurar (${selected})` : "↩️ Restaurar seleccionados";
+}
+
+async function restoreSelectedTrash() {
+    const items = getSelectedTrashItems();
+    if (!items.length) return;
+    const button = document.getElementById("trash-restore-selected");
+    button.disabled = true;
+    try {
+        const results = await Promise.all(items.map(item =>
+            fetch(`${CONFIG.API_URL}/api/custom/file-trash/${item.type === "file" ? "files" : "folders"}/${item.id}/restore`, {
+                method: "POST",
+                headers: getHeaders(false)
+            })
+        ));
+        const failed = results.find(result => !result.ok);
+        if (failed) throw new Error("No se pudieron restaurar todos los elementos seleccionados.");
+        await loadTrash();
+        if (state.currentView === "files") await loadFiles();
+    } catch (err) {
+        alert(err.message);
+        button.disabled = false;
+    }
+}
+
+async function emptyTrash() {
+    const items = Array.from(document.querySelectorAll(".trash-item-check"))
+        .map(input => JSON.parse(input.dataset.item));
+    if (!items.length) return;
+    if (!confirm(`Se eliminarán definitivamente ${items.length} elemento(s). Esta acción no se puede deshacer.`)) return;
+    const button = document.getElementById("trash-empty");
+    button.disabled = true;
+    try {
+        const results = await Promise.all(items.map(item =>
+            fetch(`${CONFIG.API_URL}/api/custom/file-trash/${item.type === "file" ? "files" : "folders"}/${item.id}`, {
+                method: "DELETE",
+                headers: getHeaders(false)
+            })
+        ));
+        const failed = results.find(result => !result.ok);
+        if (failed) throw new Error("No se pudieron eliminar todos los elementos.");
+        await loadTrash();
+    } catch (err) {
+        alert(err.message);
+        button.disabled = false;
+    }
 }
 
 async function restoreTrashItem(item) {
@@ -922,7 +1130,11 @@ async function processUploadQueue() {
     try {
         while (state.uploadQueue.length > 0) {
             const queued = state.uploadQueue.shift();
-            await uploadFileInChunks(queued.file, queued.folderId);
+            try {
+                await uploadFileInChunks(queued.file, queued.folderId);
+            } catch (err) {
+                alert(`No se pudo subir ${queued.file.name}: ${err.message}`);
+            }
         }
     } finally {
         state.uploadInProgress = false;
@@ -965,14 +1177,6 @@ async function uploadFileInChunks(file, folderId) {
         const end = Math.min(start + CONFIG.CHUNK_SIZE, file.size);
         const chunkBlob = file.slice(start, end);
 
-        const formData = new FormData();
-        formData.append("uploadId", uploadId);
-        formData.append("chunkIndex", i.toString());
-        formData.append("totalChunks", totalChunks.toString());
-        formData.append("fileName", file.name);
-        formData.append("folderId", folderId || "");
-        formData.append("chunk", chunkBlob, file.name);
-
         subtextEl.textContent = `Enviando fragmento ${i + 1} de ${totalChunks}...`;
 
         try {
@@ -981,6 +1185,14 @@ async function uploadFileInChunks(file, folderId) {
             let refreshedForChunk = false;
             for (let attempt = 1; attempt <= 3; attempt += 1) {
                 try {
+                    const formData = new FormData();
+                    formData.append("uploadId", uploadId);
+                    formData.append("chunkIndex", i.toString());
+                    formData.append("totalChunks", totalChunks.toString());
+                    formData.append("fileName", file.name);
+                    formData.append("folderId", folderId || "");
+                    formData.append("chunk", chunkBlob, file.name);
+
                     res = await fetch(`${CONFIG.API_URL}/api/custom/upload-chunk`, {
                         method: "POST",
                         headers: { "Authorization": state.token },
@@ -1026,14 +1238,50 @@ async function uploadFileInChunks(file, folderId) {
             bytesEl.textContent = `${formatMB(bytesUploaded)} MB / ${formatMB(file.size)} MB`;
             pctEl.textContent = `${percentage}%`;
         } catch (err) {
-            alert(`Error en la subida: ${err.message}`);
             subtextEl.textContent = `Error: ${err.message}`;
-            return;
+            throw err;
         }
     }
 
     subtextEl.textContent = "Ensamblando y verificando integridad...";
-    await new Promise(resolve => setTimeout(resolve, 600));
+    let completionError;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+        const completeData = new FormData();
+        completeData.append("uploadId", uploadId);
+        completeData.append("totalChunks", totalChunks.toString());
+        completeData.append("fileName", file.name);
+        completeData.append("folderId", folderId || "");
+
+        try {
+            const res = await fetch(`${CONFIG.API_URL}/api/custom/upload-complete`, {
+                method: "POST",
+                headers: { "Authorization": state.token },
+                body: completeData
+            });
+            const responseText = await res.text();
+            let data = {};
+            try {
+                data = responseText ? JSON.parse(responseText) : {};
+            } catch (_) {
+                data = {};
+            }
+            if (!res.ok) {
+                throw new Error(data.error || data.message || responseText || `Error HTTP ${res.status}.`);
+            }
+            subtextEl.textContent = "Subida completada.";
+            fillEl.style.width = "100%";
+            pctEl.textContent = "100.0%";
+            return data;
+        } catch (err) {
+            completionError = err;
+            if (attempt < 3) {
+                subtextEl.textContent = "Reintentando finalizar la subida...";
+                await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+            }
+        }
+    }
+
+    throw completionError || new Error("No se pudo completar la subida.");
 }
 
 // ==========================================
@@ -1091,10 +1339,12 @@ function renderCalendar() {
             ${evt.location ? `<div style="font-size:0.8125rem; margin-top:0.25rem;">📍 ${escapeHtml(evt.location)}</div>` : ""}
             ${evt.description ? `<p style="font-size:0.8125rem; color:var(--text-muted); margin-top:0.5rem;">${escapeHtml(evt.description)}</p>` : ""}
             <div style="margin-top:0.75rem; text-align:right;">
+                <button class="btn btn-secondary btn-sm edit-event-btn" data-event-id="${escapeHtml(evt.id)}">Editar</button>
                 <button class="btn btn-secondary btn-sm" onclick="deleteCalendarEvent('${evt.id}')">Eliminar</button>
             </div>
         `;
         listContainer.appendChild(card);
+        card.querySelector(".edit-event-btn").onclick = () => modalEditEvent(evt);
     });
 }
 
@@ -1228,10 +1478,12 @@ function renderContacts(query = "") {
             <td>${contact.company ? escapeHtml(contact.company) : "—"}</td>
             <td>${contact.is_group ? "Grupo" : "Personal"}</td>
             <td class="text-right">
+                <button class="btn btn-secondary btn-sm edit-contact-btn" data-contact-id="${escapeHtml(contact.id)}">Editar</button>
                 <button class="btn btn-secondary btn-sm" onclick="deleteContact('${contact.id}')">🗑️</button>
             </td>
         `;
         tbody.appendChild(tr);
+        tr.querySelector(".edit-contact-btn").onclick = () => modalEditContact(contact);
     });
 }
 
@@ -1755,61 +2007,71 @@ function modalNewFolder() {
 
     document.getElementById("form-new-folder").onsubmit = async (e) => {
         e.preventDefault();
-        const name = document.getElementById("folder-name-input").value.trim();
-        const isGroup = document.getElementById("folder-is-group").checked;
-
-        await fetch(`${CONFIG.API_URL}/api/collections/folders/records`, {
-            method: "POST",
-            headers: getHeaders(),
-            body: JSON.stringify({
-                name: name,
-                owner: state.user.id,
-                parent: state.currentFolder || null,
-                is_group: isGroup,
-                group: isGroup ? state.user.user_group : null
-            })
-        });
-
-        closeModal();
-        loadFiles();
+        try {
+            const name = document.getElementById("folder-name-input").value.trim();
+            const isGroup = document.getElementById("folder-is-group").checked;
+            const res = await fetch(`${CONFIG.API_URL}/api/collections/folders/records`, {
+                method: "POST",
+                headers: getHeaders(),
+                body: JSON.stringify({
+                    name: name,
+                    owner: state.user.id,
+                    parent: state.currentFolder || null,
+                    is_group: isGroup,
+                    group: isGroup ? state.user.user_group : null
+                })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.message || data.error || "No se pudo crear la carpeta.");
+            closeModal();
+            loadFiles();
+        } catch (err) {
+            alert(err.message);
+        }
     };
 }
 
 function modalNewContact() {
+    openContactModal();
+}
+
+function modalEditContact(contact) {
+    openContactModal(contact);
+}
+
+function openContactModal(contact = null) {
+    const editing = Boolean(contact);
     openModal("Nuevo Contacto", `
         <form id="form-new-contact">
             <div class="form-group">
                 <label>Nombre Completo</label>
-                <input type="text" id="contact-name" required>
+                <input type="text" id="contact-name" required value="${escapeHtml(contact?.name || "")}">
             </div>
             <div class="form-group">
                 <label>Correo Electrónico</label>
-                <input type="email" id="contact-email">
+                <input type="email" id="contact-email" value="${escapeHtml(contact?.email || "")}">
             </div>
             <div class="form-group">
                 <label>Teléfono</label>
-                <input type="tel" id="contact-phone">
+                <input type="tel" id="contact-phone" value="${escapeHtml(contact?.phone || "")}">
             </div>
             <div class="form-group">
                 <label>Empresa</label>
-                <input type="text" id="contact-company">
+                <input type="text" id="contact-company" value="${escapeHtml(contact?.company || "")}">
             </div>
             <div class="form-group">
                 <label>
-                    <input type="checkbox" id="contact-is-group"> Visible para todo el grupo
+                    <input type="checkbox" id="contact-is-group" ${contact?.is_group ? "checked" : ""}> Visible para todo el grupo
                 </label>
             </div>
-            <button type="submit" class="btn btn-primary btn-block">Guardar Contacto</button>
+            <button type="submit" class="btn btn-primary btn-block">${editing ? "Guardar cambios" : "Guardar Contacto"}</button>
         </form>
     `);
 
     document.getElementById("form-new-contact").onsubmit = async (e) => {
         e.preventDefault();
         const isGroup = document.getElementById("contact-is-group").checked;
-        await fetch(`${CONFIG.API_URL}/api/collections/contacts/records`, {
-            method: "POST",
-            headers: getHeaders(),
-            body: JSON.stringify({
+        const payload = {
                 name: document.getElementById("contact-name").value.trim(),
                 email: document.getElementById("contact-email").value.trim(),
                 phone: document.getElementById("contact-phone").value.trim(),
@@ -1817,62 +2079,103 @@ function modalNewContact() {
                 owner: state.user.id,
                 is_group: isGroup,
                 group: isGroup ? state.user.user_group : null
-            })
-        });
+        };
+        const url = `${CONFIG.API_URL}/api/collections/contacts/records${editing ? `/${contact.id}` : ""}`;
+        const save = async (lockToken = "") => {
+            const res = await fetch(url, {
+                method: editing ? "PATCH" : "POST",
+                headers: editing ? { ...getHeaders(), "X-Resource-Lock": lockToken } : getHeaders(),
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.message || data.error || "No se pudo guardar el contacto.");
+        };
+        if (editing) await withResourceLock("contacts", contact.id, save);
+        else await save();
         closeModal();
         loadContacts();
     };
 }
 
 function modalNewEvent() {
+    openEventModal();
+}
+
+function modalEditEvent(event) {
+    openEventModal(event);
+}
+
+function toLocalDateTime(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    const offset = date.getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function openEventModal(event = null) {
+    const editing = Boolean(event);
     openModal("Nuevo Evento de Agenda", `
         <form id="form-new-event">
             <div class="form-group">
                 <label>Título del Evento</label>
-                <input type="text" id="event-title" required>
+                <input type="text" id="event-title" required value="${escapeHtml(event?.title || "")}">
             </div>
             <div class="form-group">
                 <label>Fecha y Hora de Inicio</label>
-                <input type="datetime-local" id="event-start" required>
+                <input type="datetime-local" id="event-start" required value="${toLocalDateTime(event?.start_time)}">
             </div>
             <div class="form-group">
                 <label>Fecha y Hora de Fin</label>
-                <input type="datetime-local" id="event-end" required>
+                <input type="datetime-local" id="event-end" required value="${toLocalDateTime(event?.end_time)}">
             </div>
             <div class="form-group">
                 <label>Ubicación</label>
-                <input type="text" id="event-location" placeholder="Sala 1...">
+                <input type="text" id="event-location" placeholder="Sala 1..." value="${escapeHtml(event?.location || "")}">
             </div>
             <div class="form-group">
                 <label>Notas</label>
-                <textarea id="event-desc" rows="2" class="form-group"></textarea>
+                <textarea id="event-desc" rows="2" class="form-group">${escapeHtml(event?.description || "")}</textarea>
             </div>
             <div class="form-group">
                 <label>
-                    <input type="checkbox" id="event-is-group"> Evento de Grupo
+                    <input type="checkbox" id="event-is-group" ${event?.is_group ? "checked" : ""}> Evento de Grupo
                 </label>
             </div>
-            <button type="submit" class="btn btn-primary btn-block">Añadir al Calendario</button>
+            <button type="submit" class="btn btn-primary btn-block">${editing ? "Guardar cambios" : "Añadir al Calendario"}</button>
         </form>
     `);
 
     document.getElementById("form-new-event").onsubmit = async (e) => {
         e.preventDefault();
         const isGroup = document.getElementById("event-is-group").checked;
-        await fetch(`${CONFIG.API_URL}/api/collections/calendar_events/records`, {
-            method: "POST",
-            headers: getHeaders(),
-            body: JSON.stringify({
+        const start = new Date(document.getElementById("event-start").value);
+        const end = new Date(document.getElementById("event-end").value);
+        if (end <= start) {
+            alert("La fecha de fin debe ser posterior al inicio.");
+            return;
+        }
+        const payload = {
                 title: document.getElementById("event-title").value.trim(),
-                start_time: new Date(document.getElementById("event-start").value).toISOString(),
-                end_time: new Date(document.getElementById("event-end").value).toISOString(),
+                start_time: start.toISOString(),
+                end_time: end.toISOString(),
                 location: document.getElementById("event-location").value.trim(),
                 description: document.getElementById("event-desc").value.trim(),
                 owner: state.user.id,
                 is_group: isGroup,
                 group: isGroup ? state.user.user_group : null
-            })
-        });
+        };
+        const url = `${CONFIG.API_URL}/api/collections/calendar_events/records${editing ? `/${event.id}` : ""}`;
+        const save = async (lockToken = "") => {
+            const res = await fetch(url, {
+                method: editing ? "PATCH" : "POST",
+                headers: editing ? { ...getHeaders(), "X-Resource-Lock": lockToken } : getHeaders(),
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.message || data.error || "No se pudo guardar el evento.");
+        };
+        if (editing) await withResourceLock("calendar_events", event.id, save);
+        else await save();
         closeModal();
         loadCalendar();
     };
